@@ -211,7 +211,7 @@ class Main:
 
                 if not has_size:
                     _print(
-                        f"Couldn't find the file size from {url}."
+                        f"{NEW_LINE}Couldn't find the file size from {url}."
                         f"{NEW_LINE}"
                         f"Status code: {status_code}"
                         f"{NEW_LINE}"
@@ -397,6 +397,8 @@ class Main:
 
         _password: str | None = sha256(password.encode()).hexdigest() if password else password
 
+        _print(f"Downloading URL: {url}{NEW_LINE}")
+
         self._parse_links_recursively(content_id, _password)
 
         # probably the link is broken so the content dir wasn't even created.
@@ -436,6 +438,7 @@ class Main:
                 del self._files_info[key]
 
         self._threaded_downloads()
+        _print(f"Download Completed!{NEW_LINE}")
         self._reset_class_properties()
 
 
@@ -508,4 +511,3 @@ if __name__ == "__main__":
             )
     except KeyboardInterrupt:
         exit(1)
-
