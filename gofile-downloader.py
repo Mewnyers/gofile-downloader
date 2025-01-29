@@ -158,10 +158,9 @@ class Main:
         if path.exists(filepath):
             if path.getsize(filepath) > 0:
                 _print(f"{filepath} already exist, skipping.{NEW_LINE}")
-
                 return
 
-        tmp_file: str =  f"{filepath}.part"
+        tmp_file: str = f"{filepath}.part"
         url: str = file_info["link"]
         user_agent: str | None = getenv("GF_USERAGENT")
 
@@ -180,7 +179,6 @@ class Main:
             "Cache-Control": "no-cache"
         }
 
-        # check for partial download and resume from last byte
         part_size: int = 0
         if path.isfile(tmp_file):
             part_size = int(path.getsize(tmp_file))
@@ -189,76 +187,78 @@ class Main:
         has_size: str | None = None
         status_code: int | None = None
 
-        try:
-            with get(url, headers=headers, stream=True, timeout=(9, 27)) as response_handler:
-                status_code = response_handler.status_code
+        max_retries = 5
+        for attempt in range(1, max_retries + 1):
+            try:
+                with get(url, headers=headers, stream=True, timeout=(9, 27)) as response_handler:
+                    status_code = response_handler.status_code
 
-                if ((response_handler.status_code in (403, 404, 405, 500)) or
-                    (part_size == 0 and response_handler.status_code != 200) or
-                    (part_size > 0 and response_handler.status_code != 206)):
-                    _print(
-                        f"Couldn't download the file from {url}."
-                        f"{NEW_LINE}"
-                        f"Status code: {status_code}"
-                        f"{NEW_LINE}"
-                    )
+                    if ((status_code in (403, 404, 405, 500)) or
+                        (part_size == 0 and status_code != 200) or
+                        (part_size > 0 and status_code != 206)):
+                        _print(
+                            f"Attempt {attempt}: Couldn't download the file from {url}."
+                            f"{NEW_LINE}Status code: {status_code}{NEW_LINE}"
+                        )
+                        continue
 
-                    return
+                    content_length: str | None = response_handler.headers.get("Content-Length")
+                    has_size = content_length if part_size == 0 \
+                        else content_length.split("/")[-1] if content_length else None
 
-                content_lenth: str | None = response_handler.headers.get("Content-Length")
-                has_size = content_lenth if part_size == 0 \
-                    else content_lenth.split("/")[-1] if content_lenth else None
+                    if not has_size:
+                        _print(
+                            f"Attempt {attempt}: Couldn't find the file size from {url}."
+                            f"{NEW_LINE}Status code: {status_code}{NEW_LINE}"
+                        )
+                        continue
 
-                if not has_size:
-                    _print(
-                        f"{NEW_LINE}Couldn't find the file size from {url}."
-                        f"{NEW_LINE}"
-                        f"Status code: {status_code}"
-                        f"{NEW_LINE}"
-                    )
+                    with open(tmp_file, "ab") as handler:
+                        total_size: float = float(has_size)
 
-                    return
+                        start_time: float = perf_counter()
+                        for i, chunk in enumerate(response_handler.iter_content(chunk_size=chunk_size)):
+                            progress: float = (part_size + (i * len(chunk))) / total_size * 100
 
-                with open(tmp_file, "ab") as handler:
-                    total_size: float = float(has_size)
+                            handler.write(chunk)
 
-                    start_time: float = perf_counter()
-                    for i, chunk in enumerate(response_handler.iter_content(chunk_size=chunk_size)):
-                        progress: float = (part_size + (i * len(chunk))) / total_size * 100
+                            rate: float = (i * len(chunk)) / (perf_counter()-start_time)
+                            unit: str = "B/s"
+                            if rate < (1024):
+                                unit = "B/s"
+                            elif rate < (1024*1024):
+                                rate /= 1024
+                                unit = "KB/s"
+                            elif rate < (1024*1024*1024):
+                                rate /= (1024 * 1024)
+                                unit = "MB/s"
+                            elif rate < (1024*1024*1024*1024):
+                                rate /= (1024 * 1024 * 1024)
+                                unit = "GB/s"
 
-                        handler.write(chunk)
+                            with self._lock:
+                                _print(f"\r{' ' * len(self._message)}")
 
-                        rate: float = (i * len(chunk)) / (perf_counter()-start_time)
-                        unit: str = "B/s"
-                        if rate < (1024):
-                            unit = "B/s"
-                        elif rate < (1024*1024):
-                            rate /= 1024
-                            unit = "KB/s"
-                        elif rate < (1024*1024*1024):
-                            rate /= (1024 * 1024)
-                            unit = "MB/s"
-                        elif rate < (1024*1024*1024*1024):
-                            rate /= (1024 * 1024 * 1024)
-                            unit = "GB/s"
+                                self._message = f"\rDownloading {file_info['filename']}: {part_size + i * len(chunk)}" \
+                                f" of {has_size} {round(progress, 1)}% {round(rate, 1)}{unit}"
 
-                        # thread safe update the self._message, so no output interleaves
-                        with self._lock:
-                            _print(f"\r{' ' * len(self._message)}")
+                                _print(self._message)
+                    
+                    if has_size and path.getsize(tmp_file) == int(has_size):
+                        _print(f"\r{' ' * len(self._message)}")
+                        _print(f"\rDownloading {file_info['filename']}: "
+                            f"{path.getsize(tmp_file)} of {has_size} Done!"
+                            f"{NEW_LINE}"
+                        )
+                        move(tmp_file, filepath)
+                        return
+            except Exception as e:
+                _print(f"Attempt {attempt}: Error downloading {file_info['filename']}: {e}{NEW_LINE}")
 
-                            self._message = f"\rDownloading {file_info['filename']}: {part_size + i * len(chunk)}" \
-                            f" of {has_size} {round(progress, 1)}% {round(rate, 1)}{unit}"
-
-                            _print(self._message)
-        finally:
-            with self._lock:
-                if has_size and path.getsize(tmp_file) == int(has_size):
-                    _print(f"\r{' ' * len(self._message)}")
-                    _print(f"\rDownloading {file_info['filename']}: "
-                        f"{path.getsize(tmp_file)} of {has_size} Done!"
-                        f"{NEW_LINE}"
-                    )
-                    move(tmp_file, filepath)
+            if attempt < max_retries:
+                _print(f"Retrying ({attempt}/{max_retries})...{NEW_LINE}")
+            else:
+                _print(f"Failed to download {file_info['filename']} after {max_retries} attempts.{NEW_LINE}")
 
 
     def _parse_links_recursively(
@@ -438,7 +438,7 @@ class Main:
                 del self._files_info[key]
 
         self._threaded_downloads()
-        _print(f"Download Completed!{NEW_LINE}")
+        _print(f"Download Completed!{NEW_LINE}{NEW_LINE}")
         self._reset_class_properties()
 
 
