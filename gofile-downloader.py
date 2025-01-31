@@ -240,7 +240,7 @@ class Main:
                                 _print(f"\r{' ' * len(self._message)}")
 
                                 self._message = f"\rDownloading {file_info['filename']}: {part_size + i * len(chunk)}" \
-                                f" of {has_size} {round(progress, 1)}% {round(rate, 1)}{unit}"
+                                f" of {has_size} {round(progress, 1)}% {round(rate, 1)}{unit} "
 
                                 _print(self._message)
                     
@@ -397,7 +397,7 @@ class Main:
 
         _password: str | None = sha256(password.encode()).hexdigest() if password else password
 
-        _print(f"Downloading URL: {url}{NEW_LINE}")
+        _print(f"{NEW_LINE}Downloading URL: {url}{NEW_LINE}")
 
         self._parse_links_recursively(content_id, _password)
 
@@ -438,7 +438,7 @@ class Main:
                 del self._files_info[key]
 
         self._threaded_downloads()
-        _print(f"Download Completed!{NEW_LINE}{NEW_LINE}")
+        _print(f"Download Completed!{NEW_LINE}")
         self._reset_class_properties()
 
 
