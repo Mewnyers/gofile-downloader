@@ -128,5 +128,46 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# Custom URL list for script execution
+# URL List File
 my-urls.txt
+
+# Downloaded Media Files
+*.part*
+*.tmp
+*.temp
+*.3gp
+*.ape
+*.ass
+*.avi
+*.f4v
+*.flac
+*.flv
+*.gif
+*.jpeg
+*.jpg
+*.lrc
+*.m4a
+*.m4v
+*.mhtml
+*.mkv
+*.mov
+*.mp3
+*.mp4
+*.mpg
+*.mpga
+*.oga
+*.ogg
+*.opus
+*.png
+*.sbv
+*.srt
+*.ssa
+*.swf
+*.tt
+*.ttml
+*.url
+*.vtt
+*.wav
+*.webloc
+*.webm
+*.webp
