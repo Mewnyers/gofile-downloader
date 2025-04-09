@@ -1,0 +1,5 @@
+# Specify one URL per line in the format shown below.
+# This section is for reference only—please remove these lines before executing the script.
+
+https://gofile.io/d/aaaaa
+https://gofile.io/d/test
