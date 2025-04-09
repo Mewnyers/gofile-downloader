@@ -313,8 +313,8 @@ class Main:
             # create such a directory before proceeding
             if not self._content_dir and data["name"] != content_id:
                 self._content_dir = path.join(self._root_dir, content_id)
-
                 self._create_dir(self._content_dir)
+
                 chdir(self._content_dir)
             elif not self._content_dir and data["name"] == content_id:
                 self._content_dir = path.join(self._root_dir, content_id)
@@ -331,20 +331,26 @@ class Main:
                 else:
                     self._recursive_files_index += 1
 
+                    filename_parts = child["name"].rsplit('.', 1)
+                    filename = f"{filename_parts[0]} ({child['id'][:8]})"
+                    if len(filename_parts) > 1:
+                        filename += f".{filename_parts[1]}"
                     self._files_info[str(self._recursive_files_index)] = {
                         "path": getcwd(),
-                        "filename": child["name"],
+                        "filename": filename,
                         "link": child["link"]
                     }
-
-
             chdir(path.pardir)
         else:
             self._recursive_files_index += 1
 
+            filename_parts = data["name"].rsplit('.', 1)
+            filename = f"{filename_parts[0]} ({data['id'][:8]})"
+            if len(filename_parts) > 1:
+                filename += f".{filename_parts[1]}"
             self._files_info[str(self._recursive_files_index)] = {
                 "path": getcwd(),
-                "filename": data["name"],
+                "filename": filename,
                 "link": data["link"]
             }
 
