@@ -331,28 +331,35 @@ class Main:
                 else:
                     self._recursive_files_index += 1
 
-                    filename_parts = child["name"].rsplit('.', 1)
-                    filename = f"{filename_parts[0]} ({child['id'][:8]})"
-                    if len(filename_parts) > 1:
-                        filename += f".{filename_parts[1]}"
                     self._files_info[str(self._recursive_files_index)] = {
                         "path": getcwd(),
-                        "filename": filename,
-                        "link": child["link"]
+                        "filename": child["name"],
+                        "link": child["link"],
+                        "id": child["id"]
                     }
             chdir(path.pardir)
         else:
             self._recursive_files_index += 1
-
-            filename_parts = data["name"].rsplit('.', 1)
-            filename = f"{filename_parts[0]} ({data['id'][:8]})"
-            if len(filename_parts) > 1:
-                filename += f".{filename_parts[1]}"
             self._files_info[str(self._recursive_files_index)] = {
                 "path": getcwd(),
-                "filename": filename,
-                "link": data["link"]
+                "filename": data["name"],
+                "link": data["link"],
+                "id": data["id"]
             }
+
+        # Count the frequency of each filename
+        filename_count: dict[str, int] = {}
+        for item in self._files_info.values():
+            filename_count[item["filename"]] = filename_count.get(item["filename"], 0) + 1
+
+        # Append the file ID to the filename only if the filename is duplicated
+        for item in self._files_info.values():
+            if filename_count[item["filename"]] > 1:
+                filename_parts = item["filename"].rsplit('.', 1)
+                filename = f"{filename_parts[0]} ({item['id'][:8]})"
+                if len(filename_parts) > 1:
+                    filename += f".{filename_parts[1]}"
+                item["filename"] = filename
 
 
     def _print_list_files(self) -> None:
