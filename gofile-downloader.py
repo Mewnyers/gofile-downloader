@@ -1,19 +1,19 @@
 #! /usr/bin/env python3
 
 
-from os import chdir, getcwd, getenv, listdir, mkdir, path, rmdir
-from sys import exit, stdout, stderr
+import os
+import sys
+import requests
+import threading
+import platform
+import hashlib
+import shutil
+import time
 from typing import Any, NoReturn, TextIO
-from requests import get, post
 from concurrent.futures import ThreadPoolExecutor
-from threading import Lock
-from platform import system
-from hashlib import sha256
-from shutil import move
-from time import perf_counter, sleep
 
 
-NEW_LINE: str = "\n" if system() != "Windows" else "\r\n"
+NEW_LINE: str = "\n" if platform.system() != "Windows" else "\r\n"
 
 
 def _print(msg: str, error: bool = False) -> None:
@@ -27,7 +27,7 @@ def _print(msg: str, error: bool = False) -> None:
     :return:
     """
 
-    output: TextIO = stderr if error else stdout
+    output: TextIO = sys.stderr if error else sys.stdout
     output.write(msg)
     output.flush()
 
@@ -43,21 +43,21 @@ def die(msg: str) -> NoReturn:
     """
 
     _print(f"{msg}{NEW_LINE}", True)
-    exit(-1)
+    sys.exit(-1)
 
 
 # increase max_workers for parallel downloads
 # defaults to 5 download at time
 class Main:
     def __init__(self, url: str, password: str | None = None, max_workers: int = 5) -> None:
-        root_dir: str | None = getenv("GF_DOWNLOADDIR")
+        root_dir: str | None = os.getenv("GF_DOWNLOADDIR")
 
-        if root_dir and path.exists(root_dir):
-            chdir(root_dir)
+        if root_dir and os.path.exists(root_dir):
+            os.chdir(root_dir)
 
-        self._lock: Lock = Lock()
+        self._lock: Lock = threading.Lock()
         self._max_workers: int = max_workers
-        token: str | None = getenv("GF_TOKEN")
+        token: str | None = os.getenv("GF_TOKEN")
         self._message: str = " "
         self._content_dir: str | None = None
 
@@ -69,7 +69,7 @@ class Main:
         # where the largest index is the top most file
         self._files_info: dict[str, dict[str, str]] = {}
 
-        self._root_dir: str = root_dir if root_dir else getcwd()
+        self._root_dir: str = root_dir if root_dir else os.getcwd()
         self._token: str = token if token else self._get_token()
 
         self._parse_url_or_file(url, password)
@@ -88,13 +88,13 @@ class Main:
             _print(f"Content directory wasn't created, nothing done.{NEW_LINE}")
             return
 
-        chdir(self._content_dir)
+        os.chdir(self._content_dir)
 
         with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
             for item in self._files_info.values():
                 executor.submit(self._download_content, item)
 
-        chdir(self._root_dir)
+        os.chdir(self._root_dir)
 
 
     def _create_dir(self, dirname: str) -> None:
@@ -107,11 +107,11 @@ class Main:
         :return:
         """
 
-        current_dir: str = getcwd()
-        filepath: str = path.join(current_dir, dirname)
+        current_dir: str = os.getcwd()
+        filepath: str = os.path.join(current_dir, dirname)
 
         try:
-            mkdir(path.join(filepath))
+            os.mkdir(os.path.join(filepath))
         # if the directory already exist is safe to do nothing
         except FileExistsError:
             pass
@@ -127,7 +127,7 @@ class Main:
         :return: The access token of an account. Or exit if account creation fail.
         """
 
-        user_agent: str | None = getenv("GF_USERAGENT")
+        user_agent: str | None = os.getenv("GF_USERAGENT")
         headers: dict[str, str] = {
             "User-Agent": user_agent if user_agent else "Mozilla/5.0",
             "Accept-Encoding": "gzip, deflate, br",
@@ -135,7 +135,7 @@ class Main:
             "Connection": "keep-alive",
         }
 
-        create_account_response: dict[Any, Any] = post("https://api.gofile.io/accounts", headers=headers).json()
+        create_account_response: dict[Any, Any] = requests.post("https://api.gofile.io/accounts", headers=headers).json()
 
         if create_account_response["status"] != "ok":
             die("Account creation failed!")
@@ -154,15 +154,15 @@ class Main:
         :return:
         """
 
-        filepath: str = path.join(file_info["path"], file_info["filename"])
-        if path.exists(filepath):
-            if path.getsize(filepath) > 0:
+        filepath: str = os.path.join(file_info["path"], file_info["filename"])
+        if os.path.exists(filepath):
+            if os.path.getsize(filepath) > 0:
                 _print(f"{filepath} already exist, skipping.{NEW_LINE}")
                 return
 
         tmp_file: str = f"{filepath}.part"
         url: str = file_info["link"]
-        user_agent: str | None = getenv("GF_USERAGENT")
+        user_agent: str | None = os.getenv("GF_USERAGENT")
 
         headers: dict[str, str] = {
             "Cookie": f"accountToken={self._token}",
@@ -180,8 +180,8 @@ class Main:
         }
 
         part_size: int = 0
-        if path.isfile(tmp_file):
-            part_size = int(path.getsize(tmp_file))
+        if os.path.isfile(tmp_file):
+            part_size = int(os.path.getsize(tmp_file))
             headers["Range"] = f"bytes={part_size}-"
 
         has_size: str | None = None
@@ -190,7 +190,7 @@ class Main:
         max_retries = 5
         for attempt in range(1, max_retries + 1):
             try:
-                with get(url, headers=headers, stream=True, timeout=(20, 60)) as response_handler:
+                with requests.get(url, headers=headers, stream=True, timeout=(20, 60)) as response_handler:
                     status_code = response_handler.status_code
 
                     if ((status_code in (403, 404, 405, 500)) or
@@ -216,13 +216,13 @@ class Main:
                     with open(tmp_file, "ab") as handler:
                         total_size: float = float(has_size)
 
-                        start_time: float = perf_counter()
+                        start_time: float = time.perf_counter()
                         for i, chunk in enumerate(response_handler.iter_content(chunk_size=chunk_size)):
                             progress: float = (part_size + (i * len(chunk))) / total_size * 100
 
                             handler.write(chunk)
 
-                            rate: float = (i * len(chunk)) / (perf_counter()-start_time)
+                            rate: float = (i * len(chunk)) / (time.perf_counter()-start_time)
                             unit: str = "B/s"
                             if rate < (1024):
                                 unit = "B/s"
@@ -244,13 +244,13 @@ class Main:
 
                                 _print(self._message)
                     
-                    if has_size and path.getsize(tmp_file) == int(has_size):
+                    if has_size and os.path.getsize(tmp_file) == int(has_size):
                         _print(f"\r{' ' * len(self._message)}")
                         _print(f"\rDownloading {file_info['filename']}: "
-                            f"{path.getsize(tmp_file)} of {has_size} Done!"
+                            f"{os.path.getsize(tmp_file)} of {has_size} Done!"
                             f"{NEW_LINE}"
                         )
-                        move(tmp_file, filepath)
+                        shutil.move(tmp_file, filepath)
                         return
             except Exception as e:
                 _print(f"Attempt {attempt}: Error downloading {file_info['filename']}: {e}{NEW_LINE}")
@@ -258,7 +258,7 @@ class Main:
             if attempt < max_retries:
                 wait_time = 2 ** attempt  # wait 1, 2, 4, 8, 16, 32...
                 _print(f"Retrying ({attempt}/{max_retries})...{NEW_LINE}")
-                sleep(wait_time)
+                time.sleep(wait_time)
             else:
                 _print(f"Failed to download {file_info['filename']} after {max_retries} attempts.{NEW_LINE}")
 
@@ -284,7 +284,7 @@ class Main:
         if password:
             url = f"{url}&password={password}"
 
-        user_agent: str | None = getenv("GF_USERAGENT")
+        user_agent: str | None = os.getenv("GF_USERAGENT")
 
         headers: dict[str, str] = {
             "User-Agent": user_agent if user_agent else "Mozilla/5.0",
@@ -294,7 +294,7 @@ class Main:
             "Authorization": f"Bearer {self._token}",
         }
 
-        response: dict[Any, Any] = get(url, headers=headers).json()
+        response: dict[Any, Any] = requests.get(url, headers=headers).json()
 
         if response["status"] != "ok":
             _print(f"Failed to get a link as response from the {url}.{NEW_LINE}")
@@ -312,16 +312,16 @@ class Main:
             # And if the root directory isn't named as the content id
             # create such a directory before proceeding
             if not self._content_dir and data["name"] != content_id:
-                self._content_dir = path.join(self._root_dir, content_id)
+                self._content_dir = os.path.join(self._root_dir, content_id)
                 self._create_dir(self._content_dir)
 
-                chdir(self._content_dir)
+                os.chdir(self._content_dir)
             elif not self._content_dir and data["name"] == content_id:
-                self._content_dir = path.join(self._root_dir, content_id)
+                self._content_dir = os.path.join(self._root_dir, content_id)
                 self._create_dir(self._content_dir)
 
             self._create_dir(data["name"])
-            chdir(data["name"])
+            os.chdir(data["name"])
 
             for child_id in data["children"]:
                 child: dict[Any, Any] = data["children"][child_id]
@@ -332,16 +332,16 @@ class Main:
                     self._recursive_files_index += 1
 
                     self._files_info[str(self._recursive_files_index)] = {
-                        "path": getcwd(),
+                        "path": os.getcwd(),
                         "filename": child["name"],
                         "link": child["link"],
                         "id": child["id"]
                     }
-            chdir(path.pardir)
+            os.chdir(os.path.pardir)
         else:
             self._recursive_files_index += 1
             self._files_info[str(self._recursive_files_index)] = {
-                "path": getcwd(),
+                "path": os.getcwd(),
                 "filename": data["name"],
                 "link": data["link"],
                 "id": data["id"]
@@ -376,7 +376,7 @@ class Main:
 
         for (k, v) in self._files_info.items():
             # Trim the filepath if it's too long
-            filepath: str = path.join(v["path"], v["filename"])
+            filepath: str = os.path.join(v["path"], v["filename"])
             filepath = f"...{filepath[-MAX_FILENAME_CHARACTERS:]}" \
                 if len(filepath) > MAX_FILENAME_CHARACTERS \
                 else filepath
@@ -410,7 +410,7 @@ class Main:
             _print(f"{url} doesn't seem a valid url.{NEW_LINE}")
             return
 
-        _password: str | None = sha256(password.encode()).hexdigest() if password else password
+        _password: str | None = hashlib.sha256(password.encode()).hexdigest() if password else password
 
         _print(f"{NEW_LINE}Downloading URL: {url}{NEW_LINE}")
 
@@ -423,13 +423,13 @@ class Main:
             return
 
         # removes the root content directory if there's no file or subdirectory
-        if not listdir(self._content_dir) and not self._files_info:
+        if not os.listdir(self._content_dir) and not self._files_info:
             _print(f"Empty directory for url: {url}, nothing done.{NEW_LINE}")
-            rmdir(self._content_dir)
+            os.rmdir(self._content_dir)
             self._reset_class_properties()
             return
 
-        interactive: bool = getenv("GF_INTERACTIVE") == "1"
+        interactive: bool = os.getenv("GF_INTERACTIVE") == "1"
 
         if interactive:
             self._print_list_files()
@@ -443,7 +443,7 @@ class Main:
 
             if not input_list:
                 _print(f"Nothing done.{NEW_LINE}")
-                rmdir(self._content_dir)
+                os.rmdir(self._content_dir)
                 self._reset_class_properties()
                 return
 
@@ -468,7 +468,7 @@ class Main:
         :return:
         """
 
-        if not (path.exists(url_or_file) and path.isfile(url_or_file)):
+        if not (os.path.exists(url_or_file) and os.path.isfile(url_or_file)):
             self._download(url_or_file, _password)
             return
 
@@ -525,4 +525,4 @@ if __name__ == "__main__":
                 f"python gofile-downloader.py https://gofile.io/d/contentid password"
             )
     except KeyboardInterrupt:
-        exit(1)
+        sys.exit(1)
