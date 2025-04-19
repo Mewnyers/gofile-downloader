@@ -11,6 +11,7 @@ import shutil
 import time
 from loguru import logger
 from concurrent.futures import ThreadPoolExecutor
+from requests.exceptions import RequestException, ConnectTimeout
 
 
 def setup_logger():
@@ -128,13 +129,29 @@ class Main:
             "Connection": "keep-alive",
         }
 
-        create_account_response: dict[Any, Any] = requests.post("https://api.gofile.io/accounts", headers=headers).json()
+        try:
+            response = requests.post("https://api.gofile.io/accounts", headers=headers, timeout=10)
+            response.raise_for_status()
+            create_account_response: dict = response.json()
 
-        if create_account_response["status"] != "ok":
-            logger.error("Account creation failed!")
-            sys.exit(-1)
+            if create_account_response["status"] != "ok":
+                logger.error("Unexpected response status from GoFile API: %s", create_account_response)
+                sys.exit(-1)
 
-        return create_account_response["data"]["token"]
+            token = create_account_response["data"]["token"]
+            logger.debug("Successfully retrieved token from GoFile API.")
+            return token
+
+        except ConnectTimeout:
+            logger.error("Connection to GoFile API timed out. Please check your network connection.")
+        except RequestException as e:
+            logger.error("Request to GoFile API failed: %s", e)
+        except ValueError as e:
+            logger.error("Response parsing error: %s", e)
+        except Exception as e:
+            logger.exception("Unexpected error occurred while retrieving GoFile token.")
+
+        sys.exit(-1)
 
 
     def _download_content(self, file_info: dict[str, str], chunk_size: int = 16384) -> None:
@@ -181,7 +198,7 @@ class Main:
         has_size: str | None = None
         status_code: int | None = None
 
-        max_retries = 5
+        max_retries = 3
         for attempt in range(1, max_retries + 1):
             try:
                 with requests.get(url, headers=headers, stream=True, timeout=(20, 60)) as response_handler:
