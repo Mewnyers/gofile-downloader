@@ -9,41 +9,34 @@ import platform
 import hashlib
 import shutil
 import time
-from typing import Any, NoReturn, TextIO
+from loguru import logger
 from concurrent.futures import ThreadPoolExecutor
 
 
-NEW_LINE: str = "\n" if platform.system() != "Windows" else "\r\n"
+def setup_logger():
+    # remove existing handlers (to prevent redundant output)
+    logger.remove()
 
+    # console output (colored)
+    logger.add(
+        sys.stderr,
+        format="<level>{message}</level>",
+        level="DEBUG",
+        enqueue=True
+    )
 
-def _print(msg: str, error: bool = False) -> None:
-    """
-    _print
-
-    Print a message.
-
-    :param msg: a string to be printed.
-    :param error: if the error stream output should be used instead of the standard output.
-    :return:
-    """
-
-    output: TextIO = sys.stderr if error else sys.stdout
-    output.write(msg)
-    output.flush()
-
-
-def die(msg: str) -> NoReturn:
-    """
-    die
-
-    Display a message of error and exit.
-
-    :param msg: a string to be printed.
-    :return:
-    """
-
-    _print(f"{msg}{NEW_LINE}", True)
-    sys.exit(-1)
+    # file output: with details (timestamp, level, caller, etc.
+    logger.add(
+        "app.log",
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {name}:{function}:{line} - {message}",
+        level="DEBUG",
+        rotation="10 MB",
+        retention="7 days",
+        encoding="utf-8",
+        enqueue=True,
+        backtrace=True,
+        diagnose=True
+    )
 
 
 # increase max_workers for parallel downloads
@@ -85,7 +78,7 @@ class Main:
         """
 
         if not self._content_dir:
-            _print(f"Content directory wasn't created, nothing done.{NEW_LINE}")
+            logger.error(f"Content directory wasn't created, nothing done.")
             return
 
         os.chdir(self._content_dir)
@@ -138,7 +131,8 @@ class Main:
         create_account_response: dict[Any, Any] = requests.post("https://api.gofile.io/accounts", headers=headers).json()
 
         if create_account_response["status"] != "ok":
-            die("Account creation failed!")
+            logger.error("Account creation failed!")
+            sys.exit(-1)
 
         return create_account_response["data"]["token"]
 
@@ -157,7 +151,7 @@ class Main:
         filepath: str = os.path.join(file_info["path"], file_info["filename"])
         if os.path.exists(filepath):
             if os.path.getsize(filepath) > 0:
-                _print(f"{filepath} already exist, skipping.{NEW_LINE}")
+                logger.info(f"{filepath} already exist, skipping.")
                 return
 
         tmp_file: str = f"{filepath}.part"
@@ -196,9 +190,9 @@ class Main:
                     if ((status_code in (403, 404, 405, 500)) or
                         (part_size == 0 and status_code != 200) or
                         (part_size > 0 and status_code != 206)):
-                        _print(
+                        logger.error(
                             f"Attempt {attempt}: Couldn't download the file from {url}."
-                            f"{NEW_LINE}Status code: {status_code}{NEW_LINE}"
+                            f"\nStatus code: {status_code}"
                         )
                         continue
 
@@ -207,9 +201,9 @@ class Main:
                         else content_length.split("/")[-1] if content_length else None
 
                     if not has_size:
-                        _print(
+                        logger.error(
                             f"Attempt {attempt}: Couldn't find the file size from {url}."
-                            f"{NEW_LINE}Status code: {status_code}{NEW_LINE}"
+                            f"\nStatus code: {status_code}"
                         )
                         continue
 
@@ -237,30 +231,32 @@ class Main:
                                 unit = "GB/s"
 
                             with self._lock:
-                                _print(f"\r{' ' * len(self._message)}")
+                                self._message = (
+                                    f"Downloading {file_info['filename']}: "
+                                    f"{part_size + i * len(chunk)} of {has_size} "
+                                    f"{round(progress, 1)}% {round(rate, 1)}{unit} "
+                                )
+                                print(" " * shutil.get_terminal_size().columns, end="\r")
+                                print(self._message, end="\r", flush=True)
 
-                                self._message = f"\rDownloading {file_info['filename']}: {part_size + i * len(chunk)}" \
-                                f" of {has_size} {round(progress, 1)}% {round(rate, 1)}{unit} "
-
-                                _print(self._message)
                     
                     if has_size and os.path.getsize(tmp_file) == int(has_size):
-                        _print(f"\r{' ' * len(self._message)}")
-                        _print(f"\rDownloading {file_info['filename']}: "
+                        print(" " * shutil.get_terminal_size().columns, end="\r")
+                        logger.info(
+                            f"Downloading {file_info['filename']}: "
                             f"{os.path.getsize(tmp_file)} of {has_size} Done!"
-                            f"{NEW_LINE}"
                         )
                         shutil.move(tmp_file, filepath)
                         return
             except Exception as e:
-                _print(f"Attempt {attempt}: Error downloading {file_info['filename']}: {e}{NEW_LINE}")
+                logger.warning(f"Attempt {attempt}: Error downloading {file_info['filename']}: {e}")
 
             if attempt < max_retries:
                 wait_time = 2 ** attempt  # wait 1, 2, 4, 8, 16, 32...
-                _print(f"Retrying ({attempt}/{max_retries})...{NEW_LINE}")
+                logger.warning(f"Retrying ({attempt}/{max_retries})...")
                 time.sleep(wait_time)
             else:
-                _print(f"Failed to download {file_info['filename']} after {max_retries} attempts.{NEW_LINE}")
+                logger.error(f"Failed to download {file_info['filename']} after {max_retries} attempts.")
 
 
     def _parse_links_recursively(
@@ -297,13 +293,13 @@ class Main:
         response: dict[Any, Any] = requests.get(url, headers=headers).json()
 
         if response["status"] != "ok":
-            _print(f"Failed to get a link as response from the {url}.{NEW_LINE}")
+            logger.error(f"Failed to get a link as response from the {url}.")
             return
 
         data: dict[Any, Any] = response["data"]
 
         if "password" in data and "passwordStatus" in data and data["passwordStatus"] != "passwordOk":
-            _print(f"Password protected link. Please provide the password.{NEW_LINE}")
+            logger.warning(f"Password protected link. Please provide the password.")
             return
 
         if data["type"] == "folder":
@@ -382,11 +378,7 @@ class Main:
                 else filepath
 
             text: str =  f"{f'[{k}] -> '.ljust(width)}{filepath}"
-
-            _print(f"{text}{NEW_LINE}"
-                   f"{'-' * len(text)}"
-                   f"{NEW_LINE}"
-            )
+            logger.info(f"{text}\n{'-' * len(text)}")
 
 
     def _download(self, url: str, password: str | None = None) -> None:
@@ -402,29 +394,29 @@ class Main:
 
         try:
             if not url.split("/")[-2] == "d":
-                _print(f"The url probably doesn't have an id in it: {url}.{NEW_LINE}")
+                logger.error(f"The url probably doesn't have an id in it: {url}.")
                 return
 
             content_id: str = url.split("/")[-1]
         except IndexError:
-            _print(f"{url} doesn't seem a valid url.{NEW_LINE}")
+            logger.error(f"{url} doesn't seem a valid url.")
             return
 
         _password: str | None = hashlib.sha256(password.encode()).hexdigest() if password else password
 
-        _print(f"{NEW_LINE}Downloading URL: {url}{NEW_LINE}")
+        logger.info(f"\nDownloading URL: {url}")
 
         self._parse_links_recursively(content_id, _password)
 
         # probably the link is broken so the content dir wasn't even created.
         if not self._content_dir:
-            _print(f"No content directory created for url: {url}, nothing done.{NEW_LINE}")
+            logger.error(f"No content directory created for url: {url}, nothing done.")
             self._reset_class_properties()
             return
 
         # removes the root content directory if there's no file or subdirectory
         if not os.listdir(self._content_dir) and not self._files_info:
-            _print(f"Empty directory for url: {url}, nothing done.{NEW_LINE}")
+            logger.error(f"Empty directory for url: {url}, nothing done.")
             os.rmdir(self._content_dir)
             self._reset_class_properties()
             return
@@ -435,14 +427,12 @@ class Main:
             self._print_list_files()
 
             input_list: list[str] = input(
-                f"Files to download (Ex: 1 3 7 | or leave empty to download them all)"
-                f"{NEW_LINE}"
-                f":: "
+                f"Files to download (Ex: 1 3 7 | or leave empty to download them all)\n:: "
             ).split()
             input_list = list(set(input_list) & set(self._files_info.keys())) # ensure only valid index strings are stored
 
             if not input_list:
-                _print(f"Nothing done.{NEW_LINE}")
+                logger.info(f"Nothing done.")
                 os.rmdir(self._content_dir)
                 self._reset_class_properties()
                 return
@@ -453,7 +443,7 @@ class Main:
                 del self._files_info[key]
 
         self._threaded_downloads()
-        _print(f"Download Completed!{NEW_LINE}")
+        logger.info(f"Download Completed!")
         self._reset_class_properties()
 
 
@@ -502,27 +492,27 @@ class Main:
 
 if __name__ == "__main__":
     try:
-        from sys import argv
-
+        setup_logger()
+        
         url: str | None = None
         password: str | None = None
-        argc: int = len(argv)
+        argc: int = len(sys.argv)
 
         if argc > 1:
-            url = argv[1]
+            url = sys.argv[1]
 
             if argc > 2:
-                password = argv[2]
+                password = sys.argv[2]
 
             # Run
-            _print(f"Starting, please wait...{NEW_LINE}")
+            logger.info(f"Starting, please wait...")
             Main(url=url, password=password)
         else:
-            die(f"Usage:"
-                f"{NEW_LINE}"
-                f"python gofile-downloader.py https://gofile.io/d/contentid"
-                f"{NEW_LINE}"
-                f"python gofile-downloader.py https://gofile.io/d/contentid password"
+            logger.info(f"Usage:\n"
+                f"python gofile-downloader.py https://gofile.io/d/contentid\n"
+                f"python gofile-downloader.py https://gofile.io/d/contentid password\n"
             )
+            
+            sys.exit(-1)
     except KeyboardInterrupt:
         sys.exit(1)
