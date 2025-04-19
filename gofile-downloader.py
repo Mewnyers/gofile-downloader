@@ -214,8 +214,9 @@ class Main:
                         continue
 
                     content_length: str | None = response_handler.headers.get("Content-Length")
+                    content_range: str | None = response_handler.headers.get("Content-Range")
                     has_size = content_length if part_size == 0 \
-                        else content_length.split("/")[-1] if content_length else None
+                        else content_range.split("/")[-1] if content_range else None
 
                     if not has_size:
                         logger.error(
