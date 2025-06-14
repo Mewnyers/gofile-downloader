@@ -41,9 +41,9 @@ def setup_logger():
 
 
 # increase max_workers for parallel downloads
-# defaults to 5 download at time
+# defaults to 3 download at time
 class Main:
-    def __init__(self, url: str, password: str | None = None, max_workers: int = 5) -> None:
+    def __init__(self, url: str, password: str | None = None, max_workers: int = 3) -> None:
         root_dir: str | None = os.getenv("GF_DOWNLOADDIR")
 
         if root_dir and os.path.exists(root_dir):
