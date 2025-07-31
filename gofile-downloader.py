@@ -130,7 +130,7 @@ class Main:
         }
 
         try:
-            response = requests.post("https://api.gofile.io/accounts", headers=headers, timeout=10)
+            response = requests.post("https://api.gofile.io/accounts", headers=headers, timeout=50)
             response.raise_for_status()
             create_account_response: dict = response.json()
 
