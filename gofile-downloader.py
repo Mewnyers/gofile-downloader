@@ -10,6 +10,7 @@ import hashlib
 import shutil
 import time
 from loguru import logger
+from typing import Any
 from concurrent.futures import ThreadPoolExecutor
 from requests.exceptions import RequestException, ConnectTimeout
 
@@ -49,7 +50,7 @@ class Main:
         if root_dir and os.path.exists(root_dir):
             os.chdir(root_dir)
 
-        self._lock: Lock = threading.Lock()
+        self._lock: threading.Lock = threading.Lock()
         self._max_workers: int = max_workers
         token: str | None = os.getenv("GF_TOKEN")
         self._message: str = " "
@@ -254,9 +255,7 @@ class Main:
                                     f"{part_size + i * len(chunk)} of {has_size} "
                                     f"{round(progress, 1)}% {round(rate, 1)}{unit} "
                                 )
-                                print(" " * shutil.get_terminal_size().columns, end="\r")
-                                print(self._message, end="\r", flush=True)
-
+                                print(f"\x1b[2K{self._message}", end="\r", flush=True)
                     
                     if has_size and os.path.getsize(tmp_file) == int(has_size):
                         print(" " * shutil.get_terminal_size().columns, end="\r")
