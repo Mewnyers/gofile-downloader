@@ -106,7 +106,7 @@ class Main:
         filepath: str = os.path.join(current_dir, dirname)
 
         try:
-            os.mkdir(os.path.join(filepath))
+            os.mkdir(filepath)
         # if the directory already exist is safe to do nothing
         except FileExistsError:
             pass
@@ -307,7 +307,13 @@ class Main:
             "Authorization": f"Bearer {self._token}",
         }
 
-        response: dict[Any, Any] = requests.get(url, headers=headers).json()
+        try:
+            response_handler = requests.get(url, headers=headers, timeout=50)
+            response_handler.raise_for_status()
+            response: dict[Any, Any] = response_handler.json()
+        except RequestException as e:
+            logger.error(f"Failed to fetch content info from {url}: {e}")
+            return
 
         if response["status"] != "ok":
             logger.error(f"Failed to get a link as response from the {url}.")
