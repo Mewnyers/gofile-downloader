@@ -14,6 +14,11 @@ from typing import Any
 from concurrent.futures import ThreadPoolExecutor
 from requests.exceptions import RequestException, ConnectTimeout
 
+import urllib3
+from urllib3.exceptions import InsecureRequestWarning
+# InsecureRequestWarningを非表示にする
+urllib3.disable_warnings(InsecureRequestWarning)
+
 
 def setup_logger():
     # remove existing handlers (to prevent redundant output)
