@@ -202,7 +202,7 @@ class Main:
         max_retries = 3
         for attempt in range(1, max_retries + 1):
             try:
-                with requests.get(url, headers=headers, stream=True, timeout=(20, 60)) as response_handler:
+                with requests.get(url, headers=headers, stream=True, timeout=(20, 60), verify=False) as response_handler:
                     status_code = response_handler.status_code
 
                     if ((status_code in (403, 404, 405, 500)) or
