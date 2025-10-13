@@ -201,9 +201,30 @@ class Main:
 
         max_retries = 3
         for attempt in range(1, max_retries + 1):
+            part_size: int = 0
+            current_headers = headers.copy()
+            if os.path.isfile(tmp_file):
+                try:
+                    part_size = int(os.path.getsize(tmp_file))
+                    if part_size > 0:
+                        current_headers["Range"] = f"bytes={part_size}-"
+                except OSError as e:
+                    logger.warning(f"Could not read size of '.part' file, attempting download from scratch: {e}")
+                    part_size = 0 # Reset part_size to ensure a fresh download attempt
+
+
             try:
-                with requests.get(url, headers=headers, stream=True, timeout=(20, 60)) as response_handler:
+                with requests.get(url, headers=current_headers, stream=True, timeout=(20, 60)) as response_handler:
                     status_code = response_handler.status_code
+
+                    if status_code == 416:
+                        logger.warning(
+                            f"Attempt {attempt}: Received status 416 (Range Not Satisfiable). "
+                            f"The '.part' file is likely corrupted. Deleting it and retrying."
+                        )
+                        os.remove(tmp_file)
+                        time.sleep(1)  # Wait a moment before retrying
+                        continue
 
                     if ((status_code in (403, 404, 405, 500)) or
                         (part_size == 0 and status_code != 200) or
