@@ -58,7 +58,6 @@ class Main:
         self._lock: threading.Lock = threading.Lock()
         self._max_workers: int = max_workers
         token: str | None = os.getenv("GF_TOKEN")
-        self._message: str = " "
         self._content_dir: str | None = None
 
         # Keeps track of the number of recursion to get to the file
@@ -276,15 +275,17 @@ class Main:
                                 unit = "GB/s"
 
                             with self._lock:
-                                self._message = (
+                                message = (
                                     f"Downloading {file_info['filename']}: "
                                     f"{part_size + i * len(chunk)} of {has_size} "
                                     f"{round(progress, 1)}% {round(rate, 1)}{unit} "
                                 )
-                                print(f"\x1b[2K{self._message}", end="\r", flush=True)
+                                sys.stdout.write(f"\x1b[2K{message}\r")
+                                sys.stdout.flush()
                     
                     if has_size and os.path.getsize(tmp_file) == int(has_size):
-                        print(" " * shutil.get_terminal_size().columns, end="\r")
+                        sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                        sys.stdout.flush()
                         logger.info(
                             f"Downloading {file_info['filename']}: "
                             f"{os.path.getsize(tmp_file)} of {has_size} Done!"
@@ -533,7 +534,6 @@ class Main:
         :return:
         """
 
-        self._message: str = " "
         self._content_dir: str | None = None
         self._recursive_files_index: int = 0
         self._files_info.clear()
