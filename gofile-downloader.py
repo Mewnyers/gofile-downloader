@@ -14,6 +14,11 @@ from typing import Any
 from concurrent.futures import ThreadPoolExecutor
 from requests.exceptions import RequestException, ConnectTimeout
 
+import urllib3
+from urllib3.exceptions import InsecureRequestWarning
+# InsecureRequestWarningを非表示にする
+urllib3.disable_warnings(InsecureRequestWarning)
+
 
 def setup_logger():
     # remove existing handlers (to prevent redundant output)
@@ -214,7 +219,7 @@ class Main:
 
 
             try:
-                with requests.get(url, headers=current_headers, stream=True, timeout=(20, 60)) as response_handler:
+                with requests.get(url, headers=current_headers, stream=True, timeout=(20, 60), verify=False) as response_handler:
                     status_code = response_handler.status_code
 
                     if status_code == 416:
