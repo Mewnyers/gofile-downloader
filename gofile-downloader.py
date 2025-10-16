@@ -24,10 +24,14 @@ def setup_logger():
     # remove existing handlers (to prevent redundant output)
     logger.remove()
 
+    # コンソール出力用のフォーマット関数
+    def console_format_function(record):
+        return "<level>{message}</level>\n"
+
     # console output (colored)
     logger.add(
-        sys.stderr,
-        format="<level>{message}</level>",
+        sys.stdout,
+        format=console_format_function,
         level="DEBUG",
         enqueue=True
     )
@@ -173,7 +177,10 @@ class Main:
         filepath: str = os.path.join(file_info["path"], file_info["filename"])
         if os.path.exists(filepath):
             if os.path.getsize(filepath) > 0:
-                logger.info(f"{filepath} already exist, skipping.")
+                with self._lock:
+                    sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                    sys.stdout.flush()
+                    logger.info(f"{filepath} already exist, skipping.")
                 return
 
         tmp_file: str = f"{filepath}.part"
@@ -194,12 +201,6 @@ class Main:
             "Pragma": "no-cache",
             "Cache-Control": "no-cache"
         }
-
-        part_size: int = 0
-        if os.path.isfile(tmp_file):
-            part_size = int(os.path.getsize(tmp_file))
-            headers["Range"] = f"bytes={part_size}-"
-
         has_size: str | None = None
         status_code: int | None = None
 
@@ -213,42 +214,46 @@ class Main:
                     if part_size > 0:
                         current_headers["Range"] = f"bytes={part_size}-"
                 except OSError as e:
-                    logger.warning(f"Could not read size of '.part' file, attempting download from scratch: {e}")
+                    with self._lock:
+                        sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                        sys.stdout.flush()
+                        logger.warning(f"Could not read size of '.part' file, attempting download from scratch: {e}")
                     part_size = 0 # Reset part_size to ensure a fresh download attempt
 
 
             try:
                 with requests.get(url, headers=current_headers, stream=True, timeout=(20, 60), verify=False) as response_handler:
                     status_code = response_handler.status_code
-
                     if status_code == 416:
-                        logger.warning(
-                            f"Attempt {attempt}: Received status 416 (Range Not Satisfiable). "
-                            f"The '.part' file is likely corrupted. Deleting it and retrying."
-                        )
-                        os.remove(tmp_file)
-                        time.sleep(1)  # Wait a moment before retrying
+                        with self._lock:
+                            sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                            sys.stdout.flush()
+                            logger.warning(
+                                f"Attempt {attempt}: Received status 416 (Range Not Satisfiable). "
+                                f"The '.part' file is likely corrupted. Deleting it and retrying."
+                            )
+                        if os.path.exists(tmp_file):
+                            os.remove(tmp_file)
+                        time.sleep(1) # Wait a moment before retrying
                         continue
 
                     if ((status_code in (403, 404, 405, 500)) or
                         (part_size == 0 and status_code != 200) or
                         (part_size > 0 and status_code != 206)):
-                        logger.error(
-                            f"Attempt {attempt}: Couldn't download the file from {url}."
-                            f"\nStatus code: {status_code}"
-                        )
+                        with self._lock:
+                            sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                            sys.stdout.flush()
+                            logger.error(f"Attempt {attempt}: Couldn't download the file from {url}. Status code: {status_code}")
                         continue
 
                     content_length: str | None = response_handler.headers.get("Content-Length")
                     content_range: str | None = response_handler.headers.get("Content-Range")
-                    has_size = content_length if part_size == 0 \
-                        else content_range.split("/")[-1] if content_range else None
-
+                    has_size = content_length if part_size == 0 else content_range.split("/")[-1] if content_range else None
                     if not has_size:
-                        logger.error(
-                            f"Attempt {attempt}: Couldn't find the file size from {url}."
-                            f"\nStatus code: {status_code}"
-                        )
+                        with self._lock:
+                            sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                            sys.stdout.flush()
+                            logger.error(f"Attempt {attempt}: Couldn't find the file size from {url}. Status code: {status_code}")
                         continue
 
                     with open(tmp_file, "ab") as handler:
@@ -256,52 +261,58 @@ class Main:
 
                         start_time: float = time.perf_counter()
                         for i, chunk in enumerate(response_handler.iter_content(chunk_size=chunk_size)):
-                            progress: float = (part_size + (i * len(chunk))) / total_size * 100
-
+                            if not chunk:
+                                continue
+                            progress: float = (part_size + handler.tell()) / total_size * 100
                             handler.write(chunk)
-
-                            rate: float = (i * len(chunk)) / (time.perf_counter()-start_time)
-                            unit: str = "B/s"
-                            if rate < (1024):
-                                unit = "B/s"
-                            elif rate < (1024*1024):
-                                rate /= 1024
-                                unit = "KB/s"
-                            elif rate < (1024*1024*1024):
-                                rate /= (1024 * 1024)
-                                unit = "MB/s"
-                            elif rate < (1024*1024*1024*1024):
-                                rate /= (1024 * 1024 * 1024)
-                                unit = "GB/s"
-
-                            with self._lock:
-                                message = (
-                                    f"Downloading {file_info['filename']}: "
-                                    f"{part_size + i * len(chunk)} of {has_size} "
-                                    f"{round(progress, 1)}% {round(rate, 1)}{unit} "
-                                )
-                                sys.stdout.write(f"\x1b[2K{message}\r")
-                                sys.stdout.flush()
-                    
+                            elapsed_time = time.perf_counter() - start_time
+                            if elapsed_time > 0:
+                                rate: float = handler.tell() / elapsed_time
+                                unit: str = "B/s"
+                                if rate >= 1024**3:
+                                    rate /= 1024**3
+                                    unit = "GB/s"
+                                elif rate >= 1024**2:
+                                    rate /= 1024**2
+                                    unit = "MB/s"
+                                elif rate >= 1024:
+                                    rate /= 1024
+                                    unit = "KB/s"
+                                with self._lock:
+                                    terminal_width = shutil.get_terminal_size().columns
+                                    message = (
+                                        f"Downloading {file_info['filename']}: "
+                                        f"{part_size + handler.tell()} of {has_size} "
+                                        f"{round(progress, 1)}% {round(rate, 1)}{unit} "
+                                    )
+                                    # ターミナル幅より1文字短く切り詰め、意図しない改行を防ぐ
+                                    truncated_message = message[:terminal_width - 1]
+                                    sys.stdout.write(f"\x1b[2K{truncated_message}\r")
+                                    sys.stdout.flush()
                     if has_size and os.path.getsize(tmp_file) == int(has_size):
-                        sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
-                        sys.stdout.flush()
-                        logger.info(
-                            f"Downloading {file_info['filename']}: "
-                            f"{os.path.getsize(tmp_file)} of {has_size} Done!"
-                        )
+                        with self._lock:
+                            sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                            sys.stdout.flush()
+                            logger.info(f"Downloading {file_info['filename']}: {os.path.getsize(tmp_file)} of {has_size} Done!")
                         shutil.move(tmp_file, filepath)
                         return
             except Exception as e:
-                logger.warning(f"Attempt {attempt}: Error downloading {file_info['filename']}: {e}")
-
+                with self._lock:
+                    sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                    sys.stdout.flush()
+                    logger.warning(f"Attempt {attempt}: Error downloading {file_info['filename']}: {e}")
             if attempt < max_retries:
-                wait_time = 2 ** attempt  # wait 1, 2, 4, 8, 16, 32...
-                logger.warning(f"Retrying ({attempt}/{max_retries})...")
+                wait_time = 2 ** attempt # wait 1, 2, 4, 8, 16, 32...
+                with self._lock:
+                    sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                    sys.stdout.flush()
+                    logger.warning(f"Retrying ({attempt}/{max_retries})...")
                 time.sleep(wait_time)
             else:
-                logger.error(f"Failed to download {file_info['filename']} after {max_retries} attempts.")
-
+                with self._lock:
+                    sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                    sys.stdout.flush()
+                    logger.error(f"Failed to download {file_info['filename']} after {max_retries} attempts.")
 
     def _parse_links_recursively(
         self,
