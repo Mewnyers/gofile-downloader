@@ -180,7 +180,8 @@ class Main:
                 with self._lock:
                     sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
                     sys.stdout.flush()
-                    logger.info(f"{filepath} already exist, skipping.")
+                    relative_path = os.path.relpath(filepath, self._root_dir)
+                    logger.info(f"{relative_path} already exist, skipping.")
                 return
 
         tmp_file: str = f"{filepath}.part"
@@ -427,18 +428,22 @@ class Main:
 
         :return:
         """
+        if not self._files_info:
+            logger.info("No files found to list.")
+            return
 
         MAX_FILENAME_CHARACTERS: int = 100
-        width: int = max(len(f"[{v}] -> ") for v in self._files_info.keys())
+        width: int = max(len(f"[{k}] -> ") for k in self._files_info.keys())
 
         for (k, v) in self._files_info.items():
-            # Trim the filepath if it's too long
-            filepath: str = os.path.join(v["path"], v["filename"])
-            filepath = f"...{filepath[-MAX_FILENAME_CHARACTERS:]}" \
-                if len(filepath) > MAX_FILENAME_CHARACTERS \
-                else filepath
+            full_path: str = os.path.join(v["path"], v["filename"])
+            relative_path: str = os.path.relpath(full_path, self._root_dir)
 
-            text: str =  f"{f'[{k}] -> '.ljust(width)}{filepath}"
+            display_path: str = f"...{relative_path[-MAX_FILENAME_CHARACTERS:]}" \
+                if len(relative_path) > MAX_FILENAME_CHARACTERS \
+                else relative_path
+
+            text: str =  f"{f'[{k}] -> '.ljust(width)}{display_path}"
             logger.info(f"{text}\n{'-' * len(text)}")
 
 
