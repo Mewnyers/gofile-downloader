@@ -1,6 +1,5 @@
 #! /usr/bin/env python3
 
-
 import os
 import sys
 import requests
@@ -9,15 +8,11 @@ import platform
 import hashlib
 import shutil
 import time
+from pathlib import Path
 from loguru import logger
-from typing import Any
+from typing import Any, Dict, Optional, Union
 from concurrent.futures import ThreadPoolExecutor
 from requests.exceptions import RequestException, ConnectTimeout
-
-import urllib3
-from urllib3.exceptions import InsecureRequestWarning
-# InsecureRequestWarningを非表示にする
-urllib3.disable_warnings(InsecureRequestWarning)
 
 
 def setup_logger():
@@ -33,7 +28,7 @@ def setup_logger():
         sys.stdout,
         format=console_format_function,
         level="DEBUG",
-        enqueue=True
+        enqueue=False
     )
 
     # file output: with details (timestamp, level, caller, etc.
@@ -54,28 +49,36 @@ def setup_logger():
 # defaults to 3 download at time
 class Main:
     def __init__(self, url: str, password: str | None = None, max_workers: int = 3) -> None:
-        root_dir: str | None = os.getenv("GF_DOWNLOADDIR")
+        root_dir_str: str | None = os.getenv("GF_DOWNLOADDIR")
+        
+        if root_dir_str and Path(root_dir_str).is_dir():
+            self._root_dir: Path = Path(root_dir_str)
+        else:
+            self._root_dir: Path = Path.cwd()
 
-        if root_dir and os.path.exists(root_dir):
-            os.chdir(root_dir)
-
+        self._url_or_file: str = url
+        self._password: str | None = password
         self._lock: threading.Lock = threading.Lock()
         self._max_workers: int = max_workers
+        
         token: str | None = os.getenv("GF_TOKEN")
-        self._content_dir: str | None = None
+        self._token: str = token if token else self._get_token()
+
+        self._content_dir: Optional[Path] = None
 
         # Keeps track of the number of recursion to get to the file
         self._recursive_files_index: int = 0
 
         # Dictionary to hold information about file and its directories structure
-        # {"index": {"path": "", "filename": "", "link": ""}}
-        # where the largest index is the top most file
-        self._files_info: dict[str, dict[str, str]] = {}
+        # {"index": {"path": Path, "filename": "", "link": "", "id": ""}}
+        self._files_info: Dict[str, Dict[str, Union[str, Path]]] = {}
 
-        self._root_dir: str = root_dir if root_dir else os.getcwd()
-        self._token: str = token if token else self._get_token()
-
-        self._parse_url_or_file(url, password)
+    def run(self) -> None:
+        """
+        ダウンロード処理を実行します。
+        """
+        logger.info(f"Starting, please wait...")
+        self._parse_url_or_file(self._url_or_file, self._password)
 
 
     def _threaded_downloads(self) -> None:
@@ -91,33 +94,9 @@ class Main:
             logger.error(f"Content directory wasn't created, nothing done.")
             return
 
-        os.chdir(self._content_dir)
-
         with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
             for item in self._files_info.values():
                 executor.submit(self._download_content, item)
-
-        os.chdir(self._root_dir)
-
-
-    def _create_dir(self, dirname: str) -> None:
-        """
-        _create_dir
-
-        creates a directory where the files will be saved if doesn't exist and change to it.
-
-        :param dirname: name of the directory to be created.
-        :return:
-        """
-
-        current_dir: str = os.getcwd()
-        filepath: str = os.path.join(current_dir, dirname)
-
-        try:
-            os.mkdir(filepath)
-        # if the directory already exist is safe to do nothing
-        except FileExistsError:
-            pass
 
 
     @staticmethod
@@ -161,40 +140,79 @@ class Main:
             logger.exception("Unexpected error occurred while retrieving GoFile token.")
 
         sys.exit(-1)
+        
+    def _get_fresh_download_link(self, file_id: str) -> Optional[str]:
+        """
+        _get_fresh_download_link
+
+        ファイルIDを使用して、Gofile APIから新しいダウンロードリンクを要求します。
+        CDNノードが故障している場合に、別のノードのリンクを取得するために使用します。
+
+        :param file_id: GofileのファイルID
+        :return: 新しいダウンロードリンク(str) または 失敗した場合は None
+        """
+        url: str = f"https://api.gofile.io/contents/{file_id}?wt=4fd6sg89d7s6&cache=true"
+        user_agent: str | None = os.getenv("GF_USERAGENT")
+        
+        headers: dict[str, str] = {
+            "User-Agent": user_agent if user_agent else "Mozilla/5.0",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Accept": "*/*",
+            "Connection": "keep-alive",
+            "Authorization": f"Bearer {self._token}",
+        }
+        
+        try:
+            response_handler = requests.get(url, headers=headers, timeout=50)
+            response_handler.raise_for_status()
+            response: dict[Any, Any] = response_handler.json()
+
+            if response["status"] == "ok" and response["data"]["type"] == "file":
+                logger.debug(f"Successfully fetched new link for file ID {file_id}")
+                return response["data"]["link"]
+            else:
+                logger.warning(f"API status not OK when fetching new link for {file_id}: {response.get('status')}")
+                return None
+
+        except RequestException as e:
+            logger.error(f"Failed to fetch new link for file ID {file_id}: {e}")
+            return None
 
 
-    def _download_content(self, file_info: dict[str, str], chunk_size: int = 16384) -> None:
+    def _download_content(self, file_info: Dict[str, Union[str, Path]], chunk_size: int = 16384) -> None:
         """
         _download_content
 
         Requests the contents of the file and writes it.
+        (CDNノード迂回ロジックを実装)
 
         :param file_info: a dictionary with information about a file to be downloaded.
         :param chunk_size: the number of bytes it should read into memory.
         :return:
         """
 
-        filepath: str = os.path.join(file_info["path"], file_info["filename"])
-        if os.path.exists(filepath):
-            if os.path.getsize(filepath) > 0:
-                with self._lock:
-                    sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
-                    sys.stdout.flush()
-                    relative_path = os.path.relpath(filepath, self._root_dir)
-                    logger.info(f"{relative_path} already exist, skipping.")
-                return
+        file_path: Path = file_info["path"] / file_info["filename"]
+        
+        if file_path.exists() and file_path.stat().st_size > 0:
+            with self._lock:
+                sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                sys.stdout.flush()
+                relative_path = file_path.relative_to(self._root_dir)
+                logger.info(f"{relative_path} already exist, skipping.")
+            return
 
-        tmp_file: str = f"{filepath}.part"
-        url: str = file_info["link"]
+        tmp_file: Path = file_path.with_suffix(f"{file_path.suffix}.part")
+        
+        file_id: str = file_info["id"]
+        current_url: str = file_info["link"]
+        
         user_agent: str | None = os.getenv("GF_USERAGENT")
 
-        headers: dict[str, str] = {
+        base_headers: dict[str, str] = {
             "Cookie": f"accountToken={self._token}",
             "Accept-Encoding": "gzip, deflate, br",
             "User-Agent": user_agent if user_agent else "Mozilla/5.0",
             "Accept": "*/*",
-            "Referer": f"{url}{('/' if not url.endswith('/') else '')}",
-            "Origin": url,
             "Connection": "keep-alive",
             "Sec-Fetch-Dest": "empty",
             "Sec-Fetch-Mode": "cors",
@@ -202,122 +220,189 @@ class Main:
             "Pragma": "no-cache",
             "Cache-Control": "no-cache"
         }
-        has_size: str | None = None
-        status_code: int | None = None
-
-        max_retries = 3
-        for attempt in range(1, max_retries + 1):
-            part_size: int = 0
-            current_headers = headers.copy()
-            if os.path.isfile(tmp_file):
-                try:
-                    part_size = int(os.path.getsize(tmp_file))
-                    if part_size > 0:
-                        current_headers["Range"] = f"bytes={part_size}-"
-                except OSError as e:
+        
+        max_link_refreshes: int = 2 # 元のリンク + 2回の新しいリンク
+        
+        for refresh_attempt in range(max_link_refreshes + 1):
+            if refresh_attempt > 0:
+                with self._lock:
+                    sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                    sys.stdout.flush()
+                    logger.warning(f"Attempting to get a new download link for {file_info['filename']} (Refresh {refresh_attempt}/{max_link_refreshes})")
+                
+                new_link = self._get_fresh_download_link(file_id)
+                
+                if not new_link or new_link == current_url:
                     with self._lock:
                         sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
                         sys.stdout.flush()
-                        logger.warning(f"Could not read size of '.part' file, attempting download from scratch: {e}")
-                    part_size = 0 # Reset part_size to ensure a fresh download attempt
-
-
-            try:
-                with requests.get(url, headers=current_headers, stream=True, timeout=(20, 60), verify=False) as response_handler:
-                    status_code = response_handler.status_code
-                    if status_code == 416:
-                        with self._lock:
-                            sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
-                            sys.stdout.flush()
-                            logger.warning(
-                                f"Attempt {attempt}: Received status 416 (Range Not Satisfiable). "
-                                f"The '.part' file is likely corrupted. Deleting it and retrying."
-                            )
-                        if os.path.exists(tmp_file):
-                            os.remove(tmp_file)
-                        time.sleep(1) # Wait a moment before retrying
-                        continue
-
-                    if ((status_code in (403, 404, 405, 500)) or
-                        (part_size == 0 and status_code != 200) or
-                        (part_size > 0 and status_code != 206)):
-                        with self._lock:
-                            sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
-                            sys.stdout.flush()
-                            logger.error(f"Attempt {attempt}: Couldn't download the file from {url}. Status code: {status_code}")
-                        continue
-
-                    content_length: str | None = response_handler.headers.get("Content-Length")
-                    content_range: str | None = response_handler.headers.get("Content-Range")
-                    has_size = content_length if part_size == 0 else content_range.split("/")[-1] if content_range else None
-                    if not has_size:
-                        with self._lock:
-                            sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
-                            sys.stdout.flush()
-                            logger.error(f"Attempt {attempt}: Couldn't find the file size from {url}. Status code: {status_code}")
-                        continue
-
-                    with open(tmp_file, "ab") as handler:
-                        total_size: float = float(has_size)
-
-                        start_time: float = time.perf_counter()
-                        for i, chunk in enumerate(response_handler.iter_content(chunk_size=chunk_size)):
-                            if not chunk:
-                                continue
-                            progress: float = (part_size + handler.tell()) / total_size * 100
-                            handler.write(chunk)
-                            elapsed_time = time.perf_counter() - start_time
-                            if elapsed_time > 0:
-                                rate: float = handler.tell() / elapsed_time
-                                unit: str = "B/s"
-                                if rate >= 1024**3:
-                                    rate /= 1024**3
-                                    unit = "GB/s"
-                                elif rate >= 1024**2:
-                                    rate /= 1024**2
-                                    unit = "MB/s"
-                                elif rate >= 1024:
-                                    rate /= 1024
-                                    unit = "KB/s"
-                                with self._lock:
-                                    terminal_width = shutil.get_terminal_size().columns
-                                    message = (
-                                        f"Downloading {file_info['filename']}: "
-                                        f"{part_size + handler.tell()} of {has_size} "
-                                        f"{round(progress, 1)}% {round(rate, 1)}{unit} "
-                                    )
-                                    # ターミナル幅より1文字短く切り詰め、意図しない改行を防ぐ
-                                    truncated_message = message[:terminal_width - 1]
-                                    sys.stdout.write(f"\x1b[2K{truncated_message}\r")
-                                    sys.stdout.flush()
-                    if has_size and os.path.getsize(tmp_file) == int(has_size):
-                        with self._lock:
-                            sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
-                            sys.stdout.flush()
-                            logger.info(f"Downloading {file_info['filename']}: {os.path.getsize(tmp_file)} of {has_size} Done!")
-                        shutil.move(tmp_file, filepath)
-                        return
-            except Exception as e:
+                        logger.error(f"Failed to get a *new* link for {file_info['filename']}. Aborting download for this file.")
+                    break # リンク再取得ループを抜ける
+                
+                current_url = new_link
                 with self._lock:
-                    sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
-                    sys.stdout.flush()
-                    logger.warning(f"Attempt {attempt}: Error downloading {file_info['filename']}: {e}")
-            if attempt < max_retries:
-                wait_time = 2 ** attempt # wait 1, 2, 4, 8, 16, 32...
-                with self._lock:
-                    sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
-                    sys.stdout.flush()
-                    logger.warning(f"Retrying ({attempt}/{max_retries})...")
-                time.sleep(wait_time)
-            else:
-                with self._lock:
-                    sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
-                    sys.stdout.flush()
-                    logger.error(f"Failed to download {file_info['filename']} after {max_retries} attempts.")
+                    logger.info(f"Got new link for {file_info['filename']}: {current_url.split('/')[2]}")
+
+            # --- 現在のリンク (current_url) でのリトライ ---
+            max_retries_per_link = 3
+            
+            for attempt in range(1, max_retries_per_link + 1):
+                part_size: int = 0
+                current_headers = base_headers.copy()
+                # リンクごとにRefererとOriginを更新
+                current_headers["Referer"] = f"{current_url}{('/' if not current_url.endswith('/') else '')}"
+                current_headers["Origin"] = current_url
+            
+                if tmp_file.is_file():
+                    try:
+                        part_size = tmp_file.stat().st_size
+                        if part_size > 0:
+                            current_headers["Range"] = f"bytes={part_size}-"
+                    except OSError as e:
+                        with self._lock:
+                            sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                            sys.stdout.flush()
+                            logger.warning(f"Could not read size of '.part' file, attempting download from scratch: {e}")
+                        part_size = 0
+
+                try:
+                    with requests.get(current_url, headers=current_headers, stream=True, timeout=(20, 60)) as response_handler:
+                        status_code = response_handler.status_code
+                        
+                        if status_code == 416:
+                            with self._lock:
+                                sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                                sys.stdout.flush()
+                                logger.warning(
+                                    f"Attempt {attempt}/{max_retries_per_link}: Received status 416 (Range Not Satisfiable). "
+                                    f"The '.part' file is likely corrupted. Deleting it and retrying."
+                                )
+                            if tmp_file.exists():
+                                tmp_file.unlink()
+                            time.sleep(1)
+                            continue # 内側リトライ
+
+                        if ((status_code in (403, 404, 405, 500)) or
+                            (part_size == 0 and status_code != 200) or
+                            (part_size > 0 and status_code != 206)):
+                            with self._lock:
+                                sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                                sys.stdout.flush()
+                                logger.error(f"Attempt {attempt}/{max_retries_per_link}: Couldn't download the file from {current_url.split('/')[2]}. Status code: {status_code}")
+                            continue # 内側リトライ
+
+                        content_length: str | None = response_handler.headers.get("Content-Length")
+                        content_range: str | None = response_handler.headers.get("Content-Range")
+                        has_size_str: str | None = content_length if part_size == 0 else content_range.split("/")[-1] if content_range else None
+
+                        # --- 改善点: CDNノード故障の検知 ---
+                        if not has_size_str and status_code == 200:
+                            with self._lock:
+                                sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                                sys.stdout.flush()
+                                logger.warning(
+                                    f"Attempt {attempt}/{max_retries_per_link}: Faulty CDN Node detected for {file_info['filename']}. "
+                                    f"Server OK (200) but no file size. Retrying on same link..."
+                                )
+                            if attempt < max_retries_per_link:
+                                time.sleep(2 ** attempt)
+                                continue # 内側リトライ
+                            else:
+                                logger.error(f"All {max_retries_per_link} attempts on this faulty link failed. Forcing link refresh.")
+                                break # ★内側ループを抜け、外側ループ（リンク再取得）へ
+
+                        if not has_size_str:
+                            with self._lock:
+                                sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                                sys.stdout.flush()
+                                logger.error(f"Attempt {attempt}/{max_retries_per_link}: Couldn't find the file size from {current_url.split('/')[2]}. Status code: {status_code}")
+                            continue # 内側リトライ
+                        
+                        # --- この時点で has_size_str は None ではない ---
+                        total_size: float = float(has_size_str)
+
+                        with open(tmp_file, "ab") as handler:
+                            start_time: float = time.perf_counter()
+                            
+                            for i, chunk in enumerate(response_handler.iter_content(chunk_size=chunk_size)):
+                                if not chunk:
+                                    continue
+                                
+                                handler.write(chunk)
+                                current_downloaded_bytes = handler.tell()
+                                total_downloaded_bytes = part_size + current_downloaded_bytes
+                                
+                                elapsed_time = time.perf_counter() - start_time
+                                
+                                if elapsed_time > 0:
+                                    rate: float = current_downloaded_bytes / elapsed_time
+                                    unit: str = "B/s"
+                                    if rate >= 1024**3:
+                                        rate /= 1024**3
+                                        unit = "GB/s"
+                                    elif rate >= 1024**2:
+                                        rate /= 1024**2
+                                        unit = "MB/s"
+                                    elif rate >= 1024:
+                                        rate /= 1024
+                                        unit = "KB/s"
+                                    
+                                    with self._lock:
+                                        terminal_width = shutil.get_terminal_size().columns
+                                        progress: float = (total_downloaded_bytes / total_size) * 100
+                                        message = (
+                                            f"Downloading {file_info['filename']}: "
+                                            f"{total_downloaded_bytes} of {int(total_size)} "
+                                            f"{round(progress, 1)}% {round(rate, 1)}{unit} "
+                                        )
+                                        truncated_message = message[:terminal_width - 1]
+                                        sys.stdout.write(f"\x1b[2K{truncated_message}\r")
+                                        sys.stdout.flush()
+
+                        final_size = tmp_file.stat().st_size
+                        
+                        if final_size == int(total_size):
+                            with self._lock:
+                                sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                                sys.stdout.flush()
+                                logger.info(f"Downloading {file_info['filename']}: {final_size} of {int(total_size)} Done!")
+                            shutil.move(tmp_file, file_path)
+                            return # ★★★ ダウンロード成功、メソッドを終了 ★★★
+                        else:
+                            with self._lock:
+                                sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                                sys.stdout.flush()
+                                logger.warning(f"Downloaded size ({final_size}) does not match expected size ({int(total_size)}) for {file_info['filename']}. Retrying.")
+                            continue # 内側リトライ
+
+                except Exception as e:
+                    with self._lock:
+                        sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                        sys.stdout.flush()
+                        logger.warning(f"Attempt {attempt}/{max_retries_per_link}: Error downloading {file_info['filename']}: {e}")
+                
+                if attempt < max_retries_per_link:
+                    wait_time = 2 ** attempt
+                    with self._lock:
+                        sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                        sys.stdout.flush()
+                        logger.warning(f"Retrying ({attempt}/{max_retries_per_link})...")
+                    time.sleep(wait_time)
+            
+            # --- 内側リトライループが終了 ---
+            # (ここに到達した場合、このリンクでのダウンロードは失敗)
+            
+        # --- 外側リンク再取得ループが終了 ---
+        with self._lock:
+            sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+            sys.stdout.flush()
+            logger.error(f"Failed to download {file_info['filename']} after {max_link_refreshes + 1} different links.")
+
 
     def _parse_links_recursively(
         self,
         content_id: str,
+        current_path: Path, # os.chdir の代わりにパスを引数で渡す
         password: str | None = None
     ) -> None:
         """
@@ -325,8 +410,10 @@ class Main:
 
         Parses for possible links recursively and populate a list with file's info
         while also creating directories and subdirectories.
+        (★ フォルダ重複作成防止ロジックを追加)
 
         :param content_id: url to the content.
+        :param current_path: 現在処理中のディレクトリパス
         :param password: content's password.
         :return:
         """
@@ -365,41 +452,38 @@ class Main:
             return
 
         if data["type"] == "folder":
-            # Do not use the default root directory named "root" created by gofile,
-            # the naming may clash if another url link uses the same "root" name.
-            # And if the root directory isn't named as the content id
-            # create such a directory before proceeding
-            if not self._content_dir and data["name"] != content_id:
-                self._content_dir = os.path.join(self._root_dir, content_id)
-                self._create_dir(self._content_dir)
-
-                os.chdir(self._content_dir)
-            elif not self._content_dir and data["name"] == content_id:
-                self._content_dir = os.path.join(self._root_dir, content_id)
-                self._create_dir(self._content_dir)
-
-            self._create_dir(data["name"])
-            os.chdir(data["name"])
+            
+            # --- 改善点: フォルダ重複作成防止 ---
+            folder_path: Path
+            if data["name"] == current_path.name:
+                # APIが返したフォルダ名が、今いるフォルダ名と同じ (例: LNRSFY == LNRSFY)
+                # これはルートフォルダ自身なので、サブディレクトリを作らない
+                folder_path = current_path
+            else:
+                # これは本当のサブフォルダ
+                folder_path = current_path / data["name"]
+                folder_path.mkdir(exist_ok=True)
+            # ------------------------------------
 
             for child_id in data["children"]:
                 child: dict[Any, Any] = data["children"][child_id]
 
                 if child["type"] == "folder":
-                    self._parse_links_recursively(child["id"], password)
+                    # 再帰呼び出しで正しいパス(folder_path)を渡す
+                    self._parse_links_recursively(child["id"], folder_path, password)
                 else:
                     self._recursive_files_index += 1
-
                     self._files_info[str(self._recursive_files_index)] = {
-                        "path": os.getcwd(),
+                        "path": folder_path, # 正しいパス(folder_path)を保存
                         "filename": child["name"],
                         "link": child["link"],
                         "id": child["id"]
                     }
-            os.chdir(os.path.pardir)
         else:
+            # ルートにファイルが直接ある場合 (current_path に保存)
             self._recursive_files_index += 1
             self._files_info[str(self._recursive_files_index)] = {
-                "path": os.getcwd(),
+                "path": current_path,
                 "filename": data["name"],
                 "link": data["link"],
                 "id": data["id"]
@@ -408,16 +492,16 @@ class Main:
         # Count the frequency of each filename
         filename_count: dict[str, int] = {}
         for item in self._files_info.values():
-            filename_count[item["filename"]] = filename_count.get(item["filename"], 0) + 1
+            filename = item["filename"]
+            filename_count[filename] = filename_count.get(filename, 0) + 1
 
         # Append the file ID to the filename only if the filename is duplicated
         for item in self._files_info.values():
-            if filename_count[item["filename"]] > 1:
-                filename_parts = item["filename"].rsplit('.', 1)
-                filename = f"{filename_parts[0]} ({item['id'][:8]})"
-                if len(filename_parts) > 1:
-                    filename += f".{filename_parts[1]}"
-                item["filename"] = filename
+            filename = item["filename"]
+            if filename_count[filename] > 1:
+                p_filename = Path(filename)
+                new_stem = f"{p_filename.stem} ({item['id'][:8]})"
+                item["filename"] = p_filename.with_stem(new_stem).name
 
 
     def _print_list_files(self) -> None:
@@ -425,8 +509,6 @@ class Main:
         _print_list_files
 
         Helper function to display a list of all files for selection.
-
-        :return:
         """
         if not self._files_info:
             logger.info("No files found to list.")
@@ -436,12 +518,12 @@ class Main:
         width: int = max(len(f"[{k}] -> ") for k in self._files_info.keys())
 
         for (k, v) in self._files_info.items():
-            full_path: str = os.path.join(v["path"], v["filename"])
-            relative_path: str = os.path.relpath(full_path, self._root_dir)
+            full_path: Path = v["path"] / v["filename"]
+            relative_path_str: str = str(full_path.relative_to(self._root_dir))
 
-            display_path: str = f"...{relative_path[-MAX_FILENAME_CHARACTERS:]}" \
-                if len(relative_path) > MAX_FILENAME_CHARACTERS \
-                else relative_path
+            display_path: str = f"...{relative_path_str[-MAX_FILENAME_CHARACTERS:]}" \
+                if len(relative_path_str) > MAX_FILENAME_CHARACTERS \
+                else relative_path_str
 
             text: str =  f"{f'[{k}] -> '.ljust(width)}{display_path}"
             logger.info(f"{text}\n{'-' * len(text)}")
@@ -452,17 +534,12 @@ class Main:
         _download
 
         Requests to start downloading files.
-
-        :param url: url of the content.
-        :param password: content's password.
-        :return:
         """
 
         try:
             if not url.split("/")[-2] == "d":
                 logger.error(f"The url probably doesn't have an id in it: {url}.")
                 return
-
             content_id: str = url.split("/")[-1]
         except IndexError:
             logger.error(f"{url} doesn't seem a valid url.")
@@ -472,18 +549,20 @@ class Main:
 
         logger.info(f"\nDownloading URL: {url}")
 
-        self._parse_links_recursively(content_id, _password)
+        # content_id に基づいてルートフォルダを(常に)作成
+        self._content_dir = self._root_dir / content_id
+        self._content_dir.mkdir(exist_ok=True)
+        
+        # _parse_links_recursively にベースパス(self._content_dir)を渡す
+        self._parse_links_recursively(content_id, self._content_dir, _password)
 
-        # probably the link is broken so the content dir wasn't even created.
-        if not self._content_dir:
-            logger.error(f"No content directory created for url: {url}, nothing done.")
-            self._reset_class_properties()
-            return
-
-        # removes the root content directory if there's no file or subdirectory
-        if not os.listdir(self._content_dir) and not self._files_info:
-            logger.error(f"Empty directory for url: {url}, nothing done.")
-            os.rmdir(self._content_dir)
+        if not self._files_info:
+            logger.error(f"No files found for url: {url}, nothing done.")
+            try:
+                if not any(self._content_dir.iterdir()):
+                    self._content_dir.rmdir()
+            except OSError as e:
+                logger.warning(f"Could not remove empty directory {self._content_dir}: {e}")
             self._reset_class_properties()
             return
 
@@ -492,21 +571,25 @@ class Main:
         if interactive:
             self._print_list_files()
 
-            input_list: list[str] = input(
+            input_str: str = input(
                 f"Files to download (Ex: 1 3 7 | or leave empty to download them all)\n:: "
-            ).split()
-            input_list = list(set(input_list) & set(self._files_info.keys())) # ensure only valid index strings are stored
+            )
+            input_list: list[str] = input_str.split()
+            valid_inputs: set[str] = set(input_list) & set(self._files_info.keys())
 
-            if not input_list:
-                logger.info(f"Nothing done.")
-                os.rmdir(self._content_dir)
+            if not input_str.strip() and self._files_info:
+                logger.info("Downloading all files...")
+            
+            elif not valid_inputs:
+                logger.info(f"No valid files selected. Nothing done.")
+                # (空フォルダは削除せず残す)
                 self._reset_class_properties()
                 return
-
-            keys_to_delete: list[str] = list(set(self._files_info.keys()) - set(input_list))
-
-            for key in keys_to_delete:
-                del self._files_info[key]
+            
+            elif valid_inputs:
+                keys_to_delete: set[str] = set(self._files_info.keys()) - valid_inputs
+                for key in keys_to_delete:
+                    del self._files_info[key]
 
         self._threaded_downloads()
         logger.info(f"Download Completed!")
@@ -518,22 +601,24 @@ class Main:
         _parse_url_or_file
 
         Parses a file or a url for possible links.
-
-        :param url_or_file: a filename with urls to be downloaded or a single url.
-        :param password: password to be used across all links, if not provided a per link password may be used.
-        :return:
         """
+        
+        url_file_path = Path(url_or_file)
 
-        if not (os.path.exists(url_or_file) and os.path.isfile(url_or_file)):
+        if not (url_file_path.exists() and url_file_path.is_file()):
             self._download(url_or_file, _password)
             return
 
-        with open(url_or_file, "r") as f:
+        with open(url_file_path, "r") as f:
             lines: list[str] = f.readlines()
 
         for line in lines:
             line_splitted: list[str] = line.split(" ")
             url: str = line_splitted[0].strip()
+            
+            if not url:
+                continue
+
             password: str | None = _password if _password else line_splitted[1].strip() \
                 if len(line_splitted) > 1 else _password
 
@@ -545,12 +630,9 @@ class Main:
         _reset_class_properties
 
         Simply put the properties of the class to be used again for another link if necessary.
-        This should be called after all jobs related to a link is done.
-
-        :return:
         """
 
-        self._content_dir: str | None = None
+        self._content_dir: Optional[Path] = None
         self._recursive_files_index: int = 0
         self._files_info.clear()
 
@@ -569,13 +651,13 @@ if __name__ == "__main__":
             if argc > 2:
                 password = sys.argv[2]
 
-            # Run
-            logger.info(f"Starting, please wait...")
-            Main(url=url, password=password)
+            downloader = Main(url=url, password=password)
+            downloader.run()
         else:
             logger.info(f"Usage:\n"
                 f"python gofile-downloader.py https://gofile.io/d/contentid\n"
                 f"python gofile-downloader.py https://gofile.io/d/contentid password\n"
+                f"python gofile-downloader.py /path/to/links.txt\n"
             )
             
             sys.exit(-1)
