@@ -56,6 +56,11 @@ class Main:
         else:
             self._root_dir: Path = Path.cwd()
 
+        # 基準パスの下に "Videos" フォルダを設定し、保存先ルートとする
+        self._root_dir: Path = self._root_dir / "Videos"
+        # Videosフォルダが存在しない場合は自動作成する
+        self._root_dir.mkdir(exist_ok=True)
+
         self._url_or_file: str = url
         self._password: str | None = password
         self._lock: threading.Lock = threading.Lock()
