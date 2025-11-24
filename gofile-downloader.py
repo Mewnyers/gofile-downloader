@@ -650,21 +650,38 @@ if __name__ == "__main__":
         password: str | None = None
         argc: int = len(sys.argv)
 
-        if argc > 1:
+        # 引数なしの処理
+        if argc == 1:
+            user_input = input("Please enter the URL or file path to download: ").strip()
+            
+            if user_input:
+                parts = user_input.split(maxsplit=1)
+                url = parts[0]
+                if len(parts) > 1:
+                    password = parts[1]
+            else:
+                sys.exit(0)
+
+        # 引数ありの処理
+        elif argc == 2:
             url = sys.argv[1]
-
-            if argc > 2:
-                password = sys.argv[2]
-
-            downloader = Main(url=url, password=password)
-            downloader.run()
+        elif argc == 3:
+            url = sys.argv[1]
+            password = sys.argv[2]
         else:
             logger.info(f"Usage:\n"
                 f"python gofile-downloader.py https://gofile.io/d/contentid\n"
                 f"python gofile-downloader.py https://gofile.io/d/contentid password\n"
                 f"python gofile-downloader.py /path/to/links.txt\n"
             )
-            
             sys.exit(-1)
+
+        if url:
+            downloader = Main(url=url, password=password)
+            downloader.run()
+
     except KeyboardInterrupt:
-        sys.exit(1)
+        pass
+    
+    finally:
+        input("\nPress Enter to exit...")
