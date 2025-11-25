@@ -4,7 +4,6 @@ import os
 import sys
 import requests
 import threading
-import platform
 import hashlib
 import shutil
 import time
