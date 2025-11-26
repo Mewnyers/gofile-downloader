@@ -9,12 +9,17 @@ import shutil
 import time
 from pathlib import Path
 from loguru import logger
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, TypedDict
 from concurrent.futures import ThreadPoolExecutor
 from requests.exceptions import RequestException, ConnectTimeout
 
-# スレッド間で共有する停止シグナル
-STOP_EVENT = threading.Event()
+# ファイル情報の辞書構造を定義
+class FileInfo(TypedDict):
+    path: Path
+    filename: str
+    link: str
+    id: str
+
 
 def setup_logger():
     # remove existing handlers (to prevent redundant output)
@@ -66,6 +71,9 @@ class Main:
         self._password: str | None = password
         self._lock: threading.Lock = threading.Lock()
         self._max_workers: int = max_workers
+
+        # 停止フラグのインスタンス化
+        self._stop_event: threading.Event = threading.Event()
         
         token: str | None = os.getenv("GF_TOKEN")
         self._token: str = token if token else self._get_token()
@@ -77,7 +85,7 @@ class Main:
 
         # Dictionary to hold information about file and its directories structure
         # {"index": {"path": Path, "filename": "", "link": "", "id": ""}}
-        self._files_info: Dict[str, Dict[str, Union[str, Path]]] = {}
+        self._files_info: Dict[str, FileInfo] = {}
 
     def run(self) -> None:
         """
@@ -103,24 +111,24 @@ class Main:
         futures = []
 
         for item in self._files_info.values():
-            if STOP_EVENT.is_set(): break
+            if self._stop_event.is_set(): break
             futures.append(executor.submit(self._download_content, item))
 
         try:
             # 0.5秒おきにフラグと完了状態をチェックし、Ctrl+Cの割り込み余地を作る
             while not all(f.done() for f in futures):
                 time.sleep(0.5)
-                if STOP_EVENT.is_set():
+                if self._stop_event.is_set():
                     break
 
         except KeyboardInterrupt:
             # 割り込み検知時のフラグセット
             logger.warning("\nUser interrupt detected in download loop.")
-            STOP_EVENT.set()
+            self._stop_event.set()
 
         finally:
             # 安全なシャットダウン処理
-            if STOP_EVENT.is_set():
+            if self._stop_event.is_set():
                 logger.warning("Stopping workers... (waiting for active downloads to pause)")
                 executor.shutdown(wait=True, cancel_futures=True)
             else:
@@ -207,7 +215,7 @@ class Main:
             return None
 
 
-    def _download_content(self, file_info: Dict[str, Union[str, Path]], chunk_size: int = 16384) -> None:
+    def _download_content(self, file_info: FileInfo, chunk_size: int = 16384) -> None:
         """
         _download_content
 
@@ -219,7 +227,7 @@ class Main:
         :return:
         """
 
-        if STOP_EVENT.is_set():
+        if self._stop_event.is_set():
             return
 
         file_path: Path = file_info["path"] / file_info["filename"]
@@ -355,7 +363,7 @@ class Main:
                         with open(tmp_file, "ab") as handler:
                             start_time: float = time.perf_counter()
                             for i, chunk in enumerate(response_handler.iter_content(chunk_size=chunk_size)):
-                                if STOP_EVENT.is_set():
+                                if self._stop_event.is_set():
                                     # 停止フラグを検知したら、現在の進捗を保存したまま中断
                                     with self._lock:
                                         sys.stdout.write(f"\r[Aborted] {file_info['filename']} saved partially.\n")
@@ -628,7 +636,7 @@ class Main:
                     del self._files_info[key]
 
         self._threaded_downloads()
-        if STOP_EVENT.is_set():
+        if self._stop_event.is_set():
             logger.warning("Download Aborted by User.")
         else:
             logger.info(f"Download Completed!")
@@ -715,8 +723,6 @@ if __name__ == "__main__":
             downloader.run()
 
     except KeyboardInterrupt:
-        STOP_EVENT.set()
-        print("\nProcess interrupted by user.")
         pass
     
     finally:
