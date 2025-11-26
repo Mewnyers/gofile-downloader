@@ -13,6 +13,8 @@ from typing import Any, Dict, Optional, Union
 from concurrent.futures import ThreadPoolExecutor
 from requests.exceptions import RequestException, ConnectTimeout
 
+# スレッド間で共有する停止シグナル
+STOP_EVENT = threading.Event()
 
 def setup_logger():
     # remove existing handlers (to prevent redundant output)
@@ -93,14 +95,36 @@ class Main:
 
         :return:
         """
-
         if not self._content_dir:
             logger.error(f"Content directory wasn't created, nothing done.")
             return
 
-        with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
-            for item in self._files_info.values():
-                executor.submit(self._download_content, item)
+        executor = ThreadPoolExecutor(max_workers=self._max_workers)
+        futures = []
+
+        for item in self._files_info.values():
+            if STOP_EVENT.is_set(): break
+            futures.append(executor.submit(self._download_content, item))
+
+        try:
+            # 0.5秒おきにフラグと完了状態をチェックし、Ctrl+Cの割り込み余地を作る
+            while not all(f.done() for f in futures):
+                time.sleep(0.5)
+                if STOP_EVENT.is_set():
+                    break
+
+        except KeyboardInterrupt:
+            # 割り込み検知時のフラグセット
+            logger.warning("\nUser interrupt detected in download loop.")
+            STOP_EVENT.set()
+
+        finally:
+            # 安全なシャットダウン処理
+            if STOP_EVENT.is_set():
+                logger.warning("Stopping workers... (waiting for active downloads to pause)")
+                executor.shutdown(wait=True, cancel_futures=True)
+            else:
+                executor.shutdown(wait=True)
 
 
     @staticmethod
@@ -194,6 +218,9 @@ class Main:
         :param chunk_size: the number of bytes it should read into memory.
         :return:
         """
+
+        if STOP_EVENT.is_set():
+            return
 
         file_path: Path = file_info["path"] / file_info["filename"]
         
@@ -327,8 +354,13 @@ class Main:
 
                         with open(tmp_file, "ab") as handler:
                             start_time: float = time.perf_counter()
-                            
                             for i, chunk in enumerate(response_handler.iter_content(chunk_size=chunk_size)):
+                                if STOP_EVENT.is_set():
+                                    # 停止フラグを検知したら、現在の進捗を保存したまま中断
+                                    with self._lock:
+                                        sys.stdout.write(f"\r[Aborted] {file_info['filename']} saved partially.\n")
+                                    return 
+
                                 if not chunk:
                                     continue
                                 
@@ -596,7 +628,10 @@ class Main:
                     del self._files_info[key]
 
         self._threaded_downloads()
-        logger.info(f"Download Completed!")
+        if STOP_EVENT.is_set():
+            logger.warning("Download Aborted by User.")
+        else:
+            logger.info(f"Download Completed!")
         self._reset_class_properties()
 
 
@@ -680,6 +715,8 @@ if __name__ == "__main__":
             downloader.run()
 
     except KeyboardInterrupt:
+        STOP_EVENT.set()
+        print("\nProcess interrupted by user.")
         pass
     
     finally:
