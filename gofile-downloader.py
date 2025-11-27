@@ -497,7 +497,6 @@ class Main:
 
         if data["type"] == "folder":
             
-            # --- 改善点: フォルダ重複作成防止 ---
             folder_path: Path
             if data["name"] == current_path.name:
                 # APIが返したフォルダ名が、今いるフォルダ名と同じ (例: LNRSFY == LNRSFY)
@@ -507,10 +506,11 @@ class Main:
                 # これは本当のサブフォルダ
                 folder_path = current_path / data["name"]
                 folder_path.mkdir(exist_ok=True)
-            # ------------------------------------
 
-            for child_id in data["children"]:
-                child: dict[Any, Any] = data["children"][child_id]
+            # "children" キーが存在しない場合（空フォルダ時）は空の辞書を返し、ループを回避する
+            children = data.get("children", {})
+            for child_id in children:
+                child: dict[Any, Any] = children[child_id]
 
                 if child["type"] == "folder":
                     # 再帰呼び出しで正しいパス(folder_path)を渡す
