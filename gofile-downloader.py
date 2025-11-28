@@ -613,6 +613,25 @@ class Main:
                 logger.warning(f"Could not remove empty directory {self._content_dir}: {e}")
             self._reset_class_properties()
             return
+        
+        # ファイルが1つだけの場合、保存先をSinglesフォルダに変更する
+        if len(self._files_info) == 1:
+            # Videosフォルダと同階層にSinglesフォルダを設定する
+            singles_dir = self._root_dir.parent / "Singles"
+            singles_dir.mkdir(exist_ok=True)
+
+            # 唯一のファイルの保存先パスを更新する（フラット化）
+            for key in self._files_info:
+                self._files_info[key]["path"] = singles_dir
+            
+            # Videos内に作成された不要なフォルダを削除する
+            # 再帰パースでサブディレクトリが作られている可能性があるため rmtree を使う
+            try:
+                if self._content_dir and self._content_dir.exists():
+                    shutil.rmtree(self._content_dir)
+                    logger.info(f"Single file detected. Redirected to: {singles_dir}")
+            except OSError as e:
+                logger.warning(f"Failed to remove unused directory {self._content_dir}: {e}")
 
         interactive: bool = os.getenv("GF_INTERACTIVE") == "1"
 
