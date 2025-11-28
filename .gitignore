@@ -131,6 +131,7 @@ dmypy.json
 # URL List & Downloaded File
 my-urls.txt
 Videos/
+Singles/
 
 # Downloaded Media Files
 *.part*
