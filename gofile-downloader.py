@@ -615,17 +615,26 @@ class Main:
             return
         
         # ファイルが1つだけの場合、保存先をSinglesフォルダに変更する
+        # 同名のファイルが既に存在する場合に限り、ID付きの名前に変更して重複を回避する
         if len(self._files_info) == 1:
-            # Videosフォルダと同階層にSinglesフォルダを設定する
             singles_dir = self._root_dir.parent / "Singles"
             singles_dir.mkdir(exist_ok=True)
 
-            # 唯一のファイルの保存先パスを更新する（フラット化）
-            for key in self._files_info:
-                self._files_info[key]["path"] = singles_dir
+            for key, item in self._files_info.items():
+                item["path"] = singles_dir
+                
+                # シンプルな名前(IDなし)で既に存在するか確認する
+                original_path = singles_dir / item["filename"]
+                
+                if original_path.exists():
+                    # 既に存在する場合、ファイル名を ID付き に変更する
+                    # これにより 2回目は別名で保存され、3回目はスキップされる
+                    p_filename = Path(item["filename"])
+                    new_stem = f"{p_filename.stem} ({item['id'][:8]})"
+                    item["filename"] = p_filename.with_stem(new_stem).name
+                    logger.info(f"Duplicate filename detected in Singles. Renaming to: {item['filename']}")
             
-            # Videos内に作成された不要なフォルダを削除する
-            # 再帰パースでサブディレクトリが作られている可能性があるため rmtree を使う
+            # Videos内に作成された不要な一時フォルダを削除する
             try:
                 if self._content_dir and self._content_dir.exists():
                     shutil.rmtree(self._content_dir)
