@@ -13,6 +13,10 @@ from typing import Any, Dict, Optional, TypedDict
 from concurrent.futures import ThreadPoolExecutor
 from requests.exceptions import RequestException, ConnectTimeout
 
+# SSL検証無効化に伴う警告ログを非表示にする
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 # ファイル情報の辞書構造を定義
 class FileInfo(TypedDict):
     path: Path
@@ -154,7 +158,7 @@ class Main:
         }
 
         try:
-            response = requests.post("https://api.gofile.io/accounts", headers=headers, timeout=50)
+            response = requests.post("https://api.gofile.io/accounts", headers=headers, timeout=50, verify=False)
             response.raise_for_status()
             create_account_response: dict = response.json()
 
@@ -199,7 +203,7 @@ class Main:
         }
         
         try:
-            response_handler = requests.get(url, headers=headers, timeout=50)
+            response_handler = requests.get(url, headers=headers, timeout=50, verify=False)
             response_handler.raise_for_status()
             response: dict[Any, Any] = response_handler.json()
 
@@ -305,7 +309,7 @@ class Main:
                         part_size = 0
 
                 try:
-                    with requests.get(current_url, headers=current_headers, stream=True, timeout=(20, 60)) as response_handler:
+                    with requests.get(current_url, headers=current_headers, stream=True, timeout=(20, 60), verify=False) as response_handler:
                         status_code = response_handler.status_code
                         
                         if status_code == 416:
@@ -478,7 +482,7 @@ class Main:
         }
 
         try:
-            response_handler = requests.get(url, headers=headers, timeout=50)
+            response_handler = requests.get(url, headers=headers, timeout=50, verify=False)
             response_handler.raise_for_status()
             response: dict[Any, Any] = response_handler.json()
         except RequestException as e:
