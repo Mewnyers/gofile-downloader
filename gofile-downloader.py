@@ -607,10 +607,10 @@ class Main:
         if not self._files_info:
             logger.error(f"No files found for url: {url}, nothing done.")
             try:
-                if not any(self._content_dir.iterdir()):
-                    self._content_dir.rmdir()
+                if self._content_dir and self._content_dir.exists():
+                    shutil.rmtree(self._content_dir)
             except OSError as e:
-                logger.warning(f"Could not remove empty directory {self._content_dir}: {e}")
+                logger.warning(f"Could not remove directory {self._content_dir}: {e}")
             self._reset_class_properties()
             return
         
