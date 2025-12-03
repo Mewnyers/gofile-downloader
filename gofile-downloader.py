@@ -692,6 +692,10 @@ class Main:
             lines: list[str] = f.readlines()
 
         for line in lines:
+            # 停止フラグが立っている場合、残りのURL処理を行わずにループを脱出する
+            if self._stop_event.is_set():
+                break
+                
             line_splitted: list[str] = line.split(" ")
             url: str = line_splitted[0].strip()
             
