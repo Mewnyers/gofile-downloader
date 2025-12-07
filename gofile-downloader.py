@@ -96,7 +96,21 @@ class Main:
         ダウンロード処理を実行します。
         """
         logger.info(f"Starting, please wait...")
-        self._parse_url_or_file(self._url_or_file, self._password)
+        
+        # APIの不調によるリスト取得漏れを防ぐため、自動的に2周実行する
+        MAX_PASSES = 2
+        
+        for i in range(1, MAX_PASSES + 1):
+            if self._stop_event.is_set():
+                break
+
+            pass_name = "Main Download" if i == 1 else "Verification"
+            logger.info(f"\n--- Pass {i}/{MAX_PASSES}: {pass_name} ---")
+            
+            self._parse_url_or_file(self._url_or_file, self._password)
+            
+            if self._stop_event.is_set():
+                break
 
 
     def _threaded_downloads(self) -> None:
