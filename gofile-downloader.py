@@ -104,6 +104,10 @@ class Main:
             if self._stop_event.is_set():
                 break
 
+            # 2周目以降に入る前に少し待機する
+            if i > 1:
+                time.sleep(3)
+
             pass_name = "Main Download" if i == 1 else "Verification"
             logger.info(f"\n--- Pass {i}/{MAX_PASSES}: {pass_name} ---")
             
