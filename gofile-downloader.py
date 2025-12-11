@@ -173,6 +173,7 @@ class Main:
             "Accept-Encoding": "gzip, deflate, br",
             "Accept": "*/*",
             "Connection": "keep-alive",
+            "x-website-token": "4fd6sg89d7s6",
         }
 
         try:
@@ -209,7 +210,7 @@ class Main:
         :param file_id: GofileのファイルID
         :return: 新しいダウンロードリンク(str) または 失敗した場合は None
         """
-        url: str = f"https://api.gofile.io/contents/{file_id}?wt=4fd6sg89d7s6&cache=true"
+        url: str = f"https://api.gofile.io/contents/{file_id}?cache=true"
         user_agent: str | None = os.getenv("GF_USERAGENT")
         
         headers: dict[str, str] = {
@@ -218,6 +219,7 @@ class Main:
             "Accept": "*/*",
             "Connection": "keep-alive",
             "Authorization": f"Bearer {self._token}",
+            "x-website-token": "4fd6sg89d7s6",
         }
         
         try:
@@ -484,7 +486,7 @@ class Main:
         :return:
         """
 
-        url: str = f"https://api.gofile.io/contents/{content_id}?wt=4fd6sg89d7s6&cache=true"
+        url: str = f"https://api.gofile.io/contents/{content_id}?cache=true"
 
         if password:
             url = f"{url}&password={password}"
@@ -497,6 +499,7 @@ class Main:
             "Accept": "*/*",
             "Connection": "keep-alive",
             "Authorization": f"Bearer {self._token}",
+            "x-website-token": "4fd6sg89d7s6",
         }
 
         try:
