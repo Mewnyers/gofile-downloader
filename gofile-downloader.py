@@ -242,9 +242,10 @@ class Main:
             response_handler.raise_for_status()
             response: dict[Any, Any] = response_handler.json()
 
-            if response["status"] == "ok" and response["data"]["type"] == "file":
+            data = response.get("data", {})
+            if response.get("status") == "ok" and data.get("type") == "file":
                 logger.debug(f"Successfully fetched new link for file ID {file_id}")
-                return response["data"]["link"]
+                return data.get("link")
             else:
                 logger.warning(f"API status not OK when fetching new link for {file_id}: {response.get('status')}")
                 return None
