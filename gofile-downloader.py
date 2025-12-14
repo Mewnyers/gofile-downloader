@@ -143,6 +143,21 @@ class Main:
                 if self._stop_event.is_set():
                     break
 
+            # 完了したタスクから結果を集計して報告する
+            skipped_count = 0
+            
+            for f in futures:
+                if f.done() and not f.cancelled():
+                    try:
+                        result = f.result()
+                        if result == "SKIPPED":
+                            skipped_count += 1
+                    except Exception:
+                        pass # エラーは各メソッド内でログ出力済みのため無視
+            
+            if skipped_count > 0:
+                logger.info(f"Skipped {skipped_count} existing files.")
+
         except KeyboardInterrupt:
             # 割り込み検知時のフラグセット
             logger.warning("\nUser interrupt detected in download loop.")
@@ -239,30 +254,25 @@ class Main:
             return None
 
 
-    def _download_content(self, file_info: FileInfo, chunk_size: int = 16384) -> None:
+    def _download_content(self, file_info: FileInfo, chunk_size: int = 16384) -> str:
         """
         _download_content
 
         Requests the contents of the file and writes it.
-        (CDNノード迂回ロジックを実装)
 
         :param file_info: a dictionary with information about a file to be downloaded.
         :param chunk_size: the number of bytes it should read into memory.
-        :return:
+        :return: Status string ("DOWNLOADED", "SKIPPED", "FAILED").
         """
 
         if self._stop_event.is_set():
-            return
+            return "FAILED"
 
         file_path: Path = file_info["path"] / file_info["filename"]
         
+        # ファイルが存在する場合、ログを出さずにステータスのみ返す
         if file_path.exists() and file_path.stat().st_size > 0:
-            with self._lock:
-                sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
-                sys.stdout.flush()
-                relative_path = file_path.relative_to(self._root_dir)
-                logger.info(f"{relative_path} already exist, skipping.")
-            return
+            return "SKIPPED"
 
         tmp_file: Path = file_path.with_suffix(f"{file_path.suffix}.part")
         
@@ -391,7 +401,7 @@ class Main:
                                     # 停止フラグを検知したら、現在の進捗を保存したまま中断
                                     with self._lock:
                                         sys.stdout.write(f"\r[Aborted] {file_info['filename']} saved partially.\n")
-                                    return 
+                                    return "FAILED"
 
                                 if not chunk:
                                     continue
@@ -435,7 +445,7 @@ class Main:
                                 sys.stdout.flush()
                                 logger.info(f"Downloading {file_info['filename']}: {final_size} of {int(total_size)} Done!")
                             shutil.move(tmp_file, file_path)
-                            return # ★★★ ダウンロード成功、メソッドを終了 ★★★
+                            return "DOWNLOADED"
                         else:
                             with self._lock:
                                 sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
@@ -465,6 +475,7 @@ class Main:
             sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
             sys.stdout.flush()
             logger.error(f"Failed to download {file_info['filename']} after {max_link_refreshes + 1} different links.")
+        return "FAILED"
 
 
     def _parse_links_recursively(
@@ -478,7 +489,6 @@ class Main:
 
         Parses for possible links recursively and populate a list with file's info
         while also creating directories and subdirectories.
-        (★ フォルダ重複作成防止ロジックを追加)
 
         :param content_id: url to the content.
         :param current_path: 現在処理中のディレクトリパス
