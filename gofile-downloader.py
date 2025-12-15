@@ -243,11 +243,12 @@ class Main:
             response: dict[Any, Any] = response_handler.json()
 
             data = response.get("data", {})
-            if response.get("status") == "ok" and data.get("type") == "file":
+            # statusがokで、かつ link が存在すれば採用する
+            if response.get("status") == "ok" and data.get("link"):
                 logger.debug(f"Successfully fetched new link for file ID {file_id}")
                 return data.get("link")
             else:
-                logger.warning(f"API status not OK when fetching new link for {file_id}: {response.get('status')}")
+                logger.warning(f"API status not OK or no link found for {file_id}. Status: {response.get('status')}, Data keys: {list(data.keys())}")
                 return None
 
         except RequestException as e:
