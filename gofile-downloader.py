@@ -298,6 +298,9 @@ class Main:
         
         max_link_refreshes: int = 2 # 元のリンク + 2回の新しいリンク
         
+        # エラー分類用変数。直前のエラーステータスを記録 ("FATAL", "TRANSIENT", "UNKNOWN", "NONE")
+        last_error_type: str = "NONE"
+
         for refresh_attempt in range(max_link_refreshes + 1):
             if refresh_attempt > 0:
                 with self._lock:
@@ -307,18 +310,38 @@ class Main:
                 
                 new_link = self._get_fresh_download_link(file_id)
                 
-                if not new_link or new_link == current_url:
+                # 厳格なエラー分類に基づく分岐
+                if not new_link:
                     with self._lock:
-                        sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
-                        sys.stdout.flush()
-                        logger.error(f"Failed to get a *new* link for {file_info['filename']}. Aborting download for this file.")
-                    break # リンク再取得ループを抜ける
-                
-                current_url = new_link
-                with self._lock:
-                    logger.info(f"Got new link for {file_info['filename']}: {current_url.split('/')[2]}")
+                        logger.error(f"Failed to get any link for {file_info['filename']}. Aborting.")
+                    break 
 
-            # --- 現在のリンク (current_url) でのリトライ ---
+                if new_link == current_url:
+                    if last_error_type == "TRANSIENT":
+                        # サーバー混雑中(502/Timeout) -> 長めの待機を入れて粘る
+                        cool_down = 5
+                        with self._lock:
+                            logger.warning(f"Got same link and server is busy (TRANSIENT). Cooling down for {cool_down}s before retry...")
+                        time.sleep(cool_down)
+                    
+                    elif last_error_type == "FATAL":
+                        # ファイル消失など(404) -> 即時撤退
+                        with self._lock:
+                            logger.error(f"Got same link and error was FATAL (e.g. 404). Aborting immediately.")
+                        break
+                    
+                    else: # UNKNOWN
+                        # 原因不明 -> 無駄打ち回避のため終了
+                        with self._lock:
+                            logger.error(f"Got same link with UNKNOWN error type. Aborting.")
+                        break
+                else:
+                    current_url = new_link
+                    with self._lock:
+                        logger.info(f"Got new link for {file_info['filename']}: {current_url.split('/')[2]}")
+
+            # --- 現在のリンク (current_url) でのリトライ処理 ---
+            last_error_type = "NONE"
             max_retries_per_link = 3
             
             for attempt in range(1, max_retries_per_link + 1):
@@ -357,7 +380,20 @@ class Main:
                             time.sleep(1)
                             continue # 内側リトライ
 
-                        if ((status_code in (403, 404, 405, 500)) or
+                        # エラータイプの判定ロジック
+                        # FATAL: 即死系エラー
+                        if status_code in (403, 404, 410, 451):
+                             last_error_type = "FATAL"
+                        
+                        # TRANSIENT: 一時的な混雑・サーバー不調
+                        elif status_code in (502, 503, 504):
+                             last_error_type = "TRANSIENT"
+                        
+                        # UNKNOWN: その他 (500, 4xx等)
+                        elif status_code != 200 and status_code != 206:
+                             last_error_type = "UNKNOWN"
+
+                        if ((status_code in (403, 404, 405, 410, 451, 500, 502, 503, 504)) or
                             (part_size == 0 and status_code != 200) or
                             (part_size > 0 and status_code != 206)):
                             with self._lock:
@@ -370,8 +406,10 @@ class Main:
                         content_range: str | None = response_handler.headers.get("Content-Range")
                         has_size_str: str | None = content_length if part_size == 0 else content_range.split("/")[-1] if content_range else None
 
-                        # --- 改善点: CDNノード故障の検知 ---
+                        # CDNノード故障の検知
                         if not has_size_str and status_code == 200:
+                            last_error_type = "TRANSIENT" # CDN不調は一時的とみなす
+
                             with self._lock:
                                 sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
                                 sys.stdout.flush()
@@ -384,16 +422,17 @@ class Main:
                                 continue # 内側リトライ
                             else:
                                 logger.error(f"All {max_retries_per_link} attempts on this faulty link failed. Forcing link refresh.")
-                                break # ★内側ループを抜け、外側ループ（リンク再取得）へ
+                                break # 内側ループを抜け、リンク再取得へ
 
                         if not has_size_str:
+                            last_error_type = "UNKNOWN"
                             with self._lock:
                                 sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
                                 sys.stdout.flush()
                                 logger.error(f"Attempt {attempt}/{max_retries_per_link}: Couldn't find the file size from {current_url.split('/')[2]}. Status code: {status_code}")
                             continue # 内側リトライ
                         
-                        # --- この時点で has_size_str は None ではない ---
+                        # ファイルサイズの取得
                         total_size: float = float(has_size_str)
 
                         with open(tmp_file, "ab") as handler:
@@ -449,13 +488,24 @@ class Main:
                             shutil.move(tmp_file, file_path)
                             return "DOWNLOADED"
                         else:
+                            last_error_type = "TRANSIENT" # 転送中断は一時的とみなす
+
                             with self._lock:
                                 sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
                                 sys.stdout.flush()
                                 logger.warning(f"Downloaded size ({final_size}) does not match expected size ({int(total_size)}) for {file_info['filename']}. Retrying.")
                             continue # 内側リトライ
 
+                # 例外によるエラー分類
+                except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout) as e:
+                    last_error_type = "TRANSIENT" # タイムアウトは粘るべき
+                    with self._lock:
+                        sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
+                        sys.stdout.flush()
+                        logger.warning(f"Attempt {attempt}/{max_retries_per_link}: Timeout error: {e}")
+                
                 except Exception as e:
+                    last_error_type = "UNKNOWN"
                     with self._lock:
                         sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
                         sys.stdout.flush()
