@@ -226,6 +226,11 @@ class Main:
         :return: 新しいダウンロードリンク(str) または 失敗した場合は None
         """
         url: str = f"https://api.gofile.io/contents/{file_id}?cache=true"
+
+        # パスワード情報がある場合はクエリパラメータに追加
+        if hasattr(self, "_current_password") and self._current_password:
+            url = f"{url}&password={self._current_password}"
+
         user_agent: str | None = os.getenv("GF_USERAGENT")
         
         headers: dict[str, str] = {
@@ -690,6 +695,7 @@ class Main:
             return
 
         _password: str | None = hashlib.sha256(password.encode()).hexdigest() if password else password
+        self._current_password = _password
 
         logger.info(f"\nDownloading URL: {url}")
 
