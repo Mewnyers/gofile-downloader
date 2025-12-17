@@ -417,6 +417,7 @@ class Main:
                                     f"Attempt {attempt}/{max_retries_per_link}: Faulty CDN Node detected for {file_info['filename']}. "
                                     f"Server OK (200) but no file size. Retrying on same link..."
                                 )
+                            
                             if attempt < max_retries_per_link:
                                 time.sleep(2 ** attempt)
                                 continue # 内側リトライ
@@ -497,19 +498,31 @@ class Main:
                             continue # 内側リトライ
 
                 # 例外によるエラー分類
-                except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout) as e:
+                except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout):
                     last_error_type = "TRANSIENT" # タイムアウトは粘るべき
+                    # URLからホスト名を抽出 (例: https://store5.gofile.io/... -> store5.gofile.io)
+                    try:
+                        host = current_url.split('/')[2]
+                    except IndexError:
+                        host = "unknown host"
+
                     with self._lock:
                         sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
                         sys.stdout.flush()
-                        logger.warning(f"Attempt {attempt}/{max_retries_per_link}: Timeout error: {e}")
+                        # 長い例外情報を出さず、シンプルに「どこのサーバーでタイムアウトしたか」だけを表示
+                        logger.warning(f"Attempt {attempt}/{max_retries_per_link}: Connection timed out ({host})")
                 
                 except Exception as e:
                     last_error_type = "UNKNOWN"
+                    # その他のエラーも念のため長すぎる場合はカットする
+                    error_msg = str(e)
+                    if len(error_msg) > 150:
+                        error_msg = error_msg[:150] + "..."
+
                     with self._lock:
                         sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
                         sys.stdout.flush()
-                        logger.warning(f"Attempt {attempt}/{max_retries_per_link}: Error downloading {file_info['filename']}: {e}")
+                        logger.warning(f"Attempt {attempt}/{max_retries_per_link}: Error downloading {file_info['filename']}: {error_msg}")
                 
                 if attempt < max_retries_per_link:
                     wait_time = 2 ** attempt
