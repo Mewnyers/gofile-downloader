@@ -110,8 +110,14 @@ class Main:
 
             pass_name = "Main Download" if i == 1 else "Verification"
             logger.info(f"\n--- Pass {i}/{MAX_PASSES}: {pass_name} ---")
+
+            # URL入力に対して、有効な処理が行われたかどうかを受け取る
+            success = self._parse_url_or_file(self._url_or_file, self._password)
             
-            self._parse_url_or_file(self._url_or_file, self._password)
+            # 有効なURLが見つからなかった場合に、検証を行わずに終了する
+            if i == 1 and not success:
+                logger.info("No valid URLs processed in Pass 1.")
+                break
             
             if self._stop_event.is_set():
                 break
@@ -687,7 +693,7 @@ class Main:
             logger.info(f"{text}\n{'-' * len(text)}")
 
 
-    def _download(self, url: str, password: str | None = None) -> None:
+    def _download(self, url: str, password: str | None = None) -> bool:
         """
         _download
 
@@ -697,11 +703,11 @@ class Main:
         try:
             if not url.split("/")[-2] == "d":
                 logger.error(f"The url probably doesn't have an id in it: {url}.")
-                return
+                return False
             content_id: str = url.split("/")[-1]
         except IndexError:
             logger.error(f"{url} doesn't seem a valid url.")
-            return
+            return False
 
         _password: str | None = hashlib.sha256(password.encode()).hexdigest() if password else password
         self._current_password = _password
@@ -723,7 +729,7 @@ class Main:
             except OSError as e:
                 logger.warning(f"Could not remove directory {self._content_dir}: {e}")
             self._reset_class_properties()
-            return
+            return False
         
         # ファイルが1つだけの場合、保存先をSinglesフォルダに変更する
         # 同名のファイルが既に存在する場合に限り、ID付きの名前に変更して重複を回避する
@@ -771,7 +777,7 @@ class Main:
                 logger.info(f"No valid files selected. Nothing done.")
                 # (空フォルダは削除せず残す)
                 self._reset_class_properties()
-                return
+                return False
             
             elif valid_inputs:
                 keys_to_delete: set[str] = set(self._files_info.keys()) - valid_inputs
@@ -784,9 +790,10 @@ class Main:
         else:
             logger.info(f"Download Completed!")
         self._reset_class_properties()
+        return True
 
 
-    def _parse_url_or_file(self, url_or_file: str, _password: str | None = None) -> None:
+    def _parse_url_or_file(self, url_or_file: str, _password: str | None = None) -> bool:
         """
         _parse_url_or_file
 
@@ -796,11 +803,13 @@ class Main:
         url_file_path = Path(url_or_file)
 
         if not (url_file_path.exists() and url_file_path.is_file()):
-            self._download(url_or_file, _password)
-            return
+            return self._download(url_or_file, _password)
 
         with open(url_file_path, "r") as f:
             lines: list[str] = f.readlines()
+
+        # リスト処理の判定フラグ
+        any_success = False
 
         for line in lines:
             # 停止フラグが立っている場合、残りのURL処理を行わずにループを脱出する
@@ -816,9 +825,12 @@ class Main:
             password: str | None = _password if _password else line_splitted[1].strip() \
                 if len(line_splitted) > 1 else _password
 
-            self._download(url, password)
+            if self._download(url, password):
+                any_success = True
 
-
+        return any_success
+    
+    
     def _reset_class_properties(self) -> None:
         """
         _reset_class_properties
