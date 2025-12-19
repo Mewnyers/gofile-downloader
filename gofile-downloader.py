@@ -327,7 +327,9 @@ class Main:
                         cool_down = 5
                         with self._lock:
                             logger.warning(f"Got same link and server is busy (TRANSIENT). Cooling down for {cool_down}s before retry...")
-                        time.sleep(cool_down)
+                        
+                        if self._stop_event.wait(cool_down):
+                            return "FAILED"
                     
                     elif last_error_type == "FATAL":
                         # ファイル消失など(404) -> 即時撤退
@@ -380,9 +382,12 @@ class Main:
                                     f"Attempt {attempt}/{max_retries_per_link}: Received status 416 (Range Not Satisfiable). "
                                     f"The '.part' file is likely corrupted. Deleting it and retrying."
                                 )
+                            
                             if tmp_file.exists():
                                 tmp_file.unlink()
-                            time.sleep(1)
+                            
+                            if self._stop_event.wait(1):
+                                return "FAILED"
                             continue # 内側リトライ
 
                         # エラータイプの判定ロジック
@@ -424,7 +429,9 @@ class Main:
                                 )
                             
                             if attempt < max_retries_per_link:
-                                time.sleep(2 ** attempt)
+                                wait_time = 2 ** attempt
+                                if self._stop_event.wait(wait_time):
+                                    return "FAILED"
                                 continue # 内側リトライ
                             else:
                                 logger.error(f"All {max_retries_per_link} attempts on this faulty link failed. Forcing link refresh.")
@@ -535,7 +542,9 @@ class Main:
                         sys.stdout.write(" " * shutil.get_terminal_size().columns + "\r")
                         sys.stdout.flush()
                         logger.warning(f"Retrying ({attempt}/{max_retries_per_link})...")
-                    time.sleep(wait_time)
+                    
+                    if self._stop_event.wait(wait_time):
+                        return "FAILED"
             
             # --- 内側リトライループが終了 ---
             # (ここに到達した場合、このリンクでのダウンロードは失敗)
