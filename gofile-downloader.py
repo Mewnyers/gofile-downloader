@@ -23,6 +23,7 @@ class FileInfo(TypedDict):
     filename: str
     link: str
     id: str
+    size: int
 
 
 def setup_logger():
@@ -641,7 +642,8 @@ class Main:
                         "path": folder_path, # 正しいパス(folder_path)を保存
                         "filename": child["name"],
                         "link": child["link"],
-                        "id": child["id"]
+                        "id": child["id"],
+                        "size": child.get("size", 0)
                     }
         else:
             # ルートにファイルが直接ある場合 (current_path に保存)
@@ -650,7 +652,8 @@ class Main:
                 "path": current_path,
                 "filename": data["name"],
                 "link": data["link"],
-                "id": data["id"]
+                "id": data["id"],
+                "size": data.get("size", 0)
             }
 
         # Count the frequency of each filename
@@ -739,18 +742,46 @@ class Main:
 
             for key, item in self._files_info.items():
                 item["path"] = singles_dir
+
+                original_filename = item["filename"]
+                original_path = singles_dir / original_filename
                 
-                # シンプルな名前(IDなし)で既に存在するか確認する
-                original_path = singles_dir / item["filename"]
+                # ID付きのファイル名を定義（リネーム用）
+                p_filename = Path(original_filename)
+                id_filename = f"{p_filename.stem} ({item['id'][:8]}){p_filename.suffix}"
+                id_path = singles_dir / id_filename
                 
-                if original_path.exists():
-                    # 既に存在する場合、ファイル名を ID付き に変更する
-                    # これにより 2回目は別名で保存され、3回目はスキップされる
-                    p_filename = Path(item["filename"])
-                    new_stem = f"{p_filename.stem} ({item['id'][:8]})"
-                    item["filename"] = p_filename.with_stem(new_stem).name
-                    logger.info(f"Duplicate filename detected in Singles. Renaming to: {item['filename']}")
-            
+                # 1. 既にID付きのファイルが存在する場合は、そちらを優先する (過去にリネーム済み)
+                if id_path.exists():
+                    item["filename"] = id_filename
+                    logger.info(f"Existing ID-named file found. Using: {item['filename']}")
+
+                # 2. シンプルなファイル名が存在する場合、サイズをチェックする
+                elif original_path.exists():
+                    try:
+                        disk_size = original_path.stat().st_size
+                        api_size = int(item.get("size", 0))
+
+                        # APIサイズが有効(>0)で、かつローカルサイズと一致する場合
+                        if api_size > 0 and disk_size == api_size:
+                            # 同一ファイルとみなし、リネームしない (Pass 2でスキップされる)
+                            pass
+                        else:
+                            # サイズ不一致、またはAPIサイズ不正の場合は、安全のためリネームして別保存
+                            item["filename"] = id_filename
+                            
+                            if api_size > 0:
+                                logger.info(f"Duplicate filename with size mismatch detected (Disk: {disk_size} vs API: {api_size}). Renaming to: {item['filename']}")
+                            else:
+                                logger.info(f"Duplicate filename detected (API size unavailable). Renaming to: {item['filename']}")
+                    
+                    except OSError:
+                        # ファイルアクセスエラー時は念の為リネーム
+                        item["filename"] = id_filename
+                        logger.warning(f"Could not access existing file. Renaming to: {item['filename']}")
+                
+                # 3. どちらも存在しない場合は、そのまま(original_filename)でOK
+
             # Videos内に作成された不要な一時フォルダを削除する
             try:
                 if self._content_dir and self._content_dir.exists():
