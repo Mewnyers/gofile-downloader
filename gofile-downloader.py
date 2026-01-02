@@ -726,6 +726,11 @@ class Main:
 
         if not self._files_info:
             logger.error(f"No files found for url: {url}, nothing done.")
+            try:
+                if self._content_dir and self._content_dir.exists():
+                    os.rmdir(self._content_dir)
+            except OSError as e:
+                logger.warning(f"Could not remove directory {self._content_dir}: {e}")
             self._reset_class_properties()
             return False
         
@@ -780,7 +785,7 @@ class Main:
             # Videos内に作成された不要な一時フォルダを削除する
             try:
                 if self._content_dir and self._content_dir.exists():
-                    shutil.rmtree(self._content_dir)
+                    os.rmdir(self._content_dir)
                     logger.info(f"Single file detected. Redirected to: {singles_dir}")
             except OSError as e:
                 logger.warning(f"Failed to remove unused directory {self._content_dir}: {e}")
