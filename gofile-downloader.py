@@ -7,6 +7,7 @@ import threading
 import hashlib
 import shutil
 import time
+import unicodedata
 from pathlib import Path
 from loguru import logger
 from typing import Any, Dict, Optional, TypedDict
@@ -231,6 +232,33 @@ class Main:
             logger.exception("Unexpected error occurred while retrieving GoFile token.")
 
         sys.exit(-1)
+
+    @staticmethod
+    def _get_char_width(char: str) -> int:
+        """
+        文字の表示幅を判定する関数
+        全角(F, W)は2、それ以外は1として計算
+        """
+        if unicodedata.east_asian_width(char) in ('F', 'W'):
+            return 2
+        return 1
+
+    @staticmethod
+    def _safe_truncate(text: str, max_width: int) -> str:
+        """
+        表示幅に基づいて文字列を切り詰める関数
+        """
+        current_width = 0
+        truncated_text = ""
+        
+        for char in text:
+            char_width = Main._get_char_width(char)
+            if current_width + char_width > max_width:
+                break
+            truncated_text += char
+            current_width += char_width
+            
+        return truncated_text
 
     def _get_fresh_download_link(self, file_id: str) -> Optional[str]:
         """
@@ -570,9 +598,9 @@ class Main:
                                             f"{total_downloaded_bytes} of {int(total_size)} "
                                             f"{round(progress, 1)}% {round(rate, 1)}{unit} "
                                         )
-                                        truncated_message = message[
-                                            : terminal_width - 1
-                                        ]
+
+                                        # 自作関数で幅に合わせてカットする
+                                        truncated_message = self._safe_truncate(message, terminal_width - 1)
                                         sys.stdout.write(
                                             f"\x1b[2K{truncated_message}\r"
                                         )
