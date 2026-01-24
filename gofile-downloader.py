@@ -797,14 +797,14 @@ class Main:
         # Count the frequency of each filename
         filename_count: dict[str, int] = {}
         for item in self._files_info.values():
-            filename = item["filename"]
-            filename_count[filename] = filename_count.get(filename, 0) + 1
+            filename_key = item["filename"].lower()
+            filename_count[filename_key] = filename_count.get(filename_key, 0) + 1
 
         # Append the file ID to the filename only if the filename is duplicated
         for item in self._files_info.values():
-            filename = item["filename"]
-            if filename_count[filename] > 1:
-                p_filename = Path(filename)
+            filename_key = item["filename"].lower()
+            if filename_count[filename_key] > 1:
+                p_filename = Path(item["filename"])
                 new_stem = f"{p_filename.stem} ({item['id'][:8]})"
                 item["filename"] = p_filename.with_stem(new_stem).name
 
