@@ -404,7 +404,7 @@ class Main:
                 else:
                     current_url = new_link
                     with self._lock:
-                        logger.info(
+                        logger.debug(
                             f"Got new link for {file_info['filename']}: {current_url.split('/')[2]}"
                         )
 
