@@ -169,6 +169,7 @@ class Main:
             # 割り込み検知時のフラグセット
             logger.warning("\nUser interrupt detected in download loop.")
             self._stop_event.set()
+            os._exit(1)
 
         finally:
             # 安全なシャットダウン処理
