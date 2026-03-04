@@ -16,7 +16,6 @@ from requests.exceptions import RequestException, ConnectTimeout
 
 # SSL検証無効化に伴う警告ログを非表示にする
 import urllib3
-
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ユーザーエージェントを定義
@@ -84,11 +83,6 @@ class Main:
 
         token: str | None = os.getenv("GF_TOKEN")
         self._token: str = token if token else self._get_token()
-
-        # Website tokenを動的に生成する
-        wt_env: str | None = os.getenv("GF_WEBSITE_TOKEN")
-        self._website_token: str = wt_env if wt_env else self._generate_website_token()
-
         self._content_dir: Optional[Path] = None
         self._current_password: Optional[str] = None
         self._recursive_files_index: int = 0
@@ -174,7 +168,7 @@ class Main:
             # 割り込み検知時のフラグセット
             logger.warning("\nUser interrupt detected in download loop.")
             self._stop_event.set()
-            os._exit(1)
+            sys.exit(1) 
 
         finally:
             # 安全なシャットダウン処理
@@ -296,7 +290,7 @@ class Main:
         url: str = f"https://api.gofile.io/contents/{file_id}?cache=true"
 
         # パスワード情報がある場合はクエリパラメータに追加
-        if hasattr(self, "_current_password") and self._current_password:
+        if self._current_password:
             url = f"{url}&password={self._current_password}"
 
         headers: dict[str, str] = {
@@ -571,9 +565,7 @@ class Main:
 
                         with open(tmp_file, "ab") as handler:
                             start_time: float = time.perf_counter()
-                            for i, chunk in enumerate(
-                                response_handler.iter_content(chunk_size=chunk_size)
-                            ):
+                            for chunk in response_handler.iter_content(chunk_size=chunk_size):
                                 if self._stop_event.is_set():
                                     # 停止フラグを検知したら、現在の進捗を保存したまま中断
                                     with self._lock:
@@ -846,7 +838,10 @@ class Main:
 
         for k, v in self._files_info.items():
             full_path: Path = v["path"] / v["filename"]
-            relative_path_str: str = str(full_path.relative_to(self._root_dir))
+            try:
+                relative_path_str: str = str(full_path.relative_to(self._root_dir))
+            except ValueError:
+                relative_path_str: str = str(full_path)
 
             display_path: str = (
                 f"...{relative_path_str[-MAX_FILENAME_CHARACTERS:]}"
@@ -870,7 +865,7 @@ class Main:
         for root, dirs, files in os.walk(directory, topdown=False):
             if files:
                 # ファイルが残っているフォルダは消さない
-                logger.info(f"Skipping cleanup for {root} (contains files).")
+                logger.debug(f"Skipping cleanup for {root} (contains files).")
                 continue
 
             # サブフォルダ削除後に自フォルダを削除する
@@ -878,10 +873,10 @@ class Main:
             try:
                 # フォルダが完全に空な場合のみ削除する
                 current_dir.rmdir()
-                logger.info(f"Deleted empty directory: {current_dir}")
+                logger.debug(f"Deleted empty directory: {current_dir}")
             except OSError as e:
                 # ファイルが残っている、またはロックされている等の理由で消せなかった場合
-                logger.info(
+                logger.debug(
                     f"Failed to remove directory {current_dir} (not empty or in use): {e}"
                 )
 
