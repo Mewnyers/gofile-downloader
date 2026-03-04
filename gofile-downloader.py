@@ -76,16 +76,17 @@ class Main:
         self._password: str | None = password
         self._lock: threading.Lock = threading.Lock()
         self._max_workers: int = max_workers
-
-        # 停止フラグのインスタンス化
         self._stop_event: threading.Event = threading.Event()
 
         token: str | None = os.getenv("GF_TOKEN")
         self._token: str = token if token else self._get_token()
 
-        self._content_dir: Optional[Path] = None
+        # Website tokenを動的に生成する
+        wt_env: str | None = os.getenv("GF_WEBSITE_TOKEN")
+        self._website_token: str = wt_env if wt_env else self._generate_website_token()
 
-        # Keeps track of the number of recursion to get to the file
+        self._content_dir: Optional[Path] = None
+        self._current_password: Optional[str] = None
         self._recursive_files_index: int = 0
 
         # Dictionary to hold information about file and its directories structure
@@ -181,6 +182,27 @@ class Main:
             else:
                 executor.shutdown(wait=True)
 
+    def _generate_website_token(self) -> str:
+        """
+        GoFileのx-website-tokenをSHA256で動的に生成する。
+
+        アルゴリズム:
+          input = UA + '::' + lang + '::' + bearer_token + '::' + time_component + '::' + 'gf2026x'
+          token = SHA256(input)
+
+          time_component = floor(Unixtime / 14400)  ← 4時間ごとに更新される
+
+        UAはGF_USERAGENTで上書き可能。langはGF_LANGで上書き可能（デフォルト: "ja"）。
+
+        :return: 64文字の16進数ハッシュ文字列
+        """
+        user_agent: str = os.getenv("GF_USERAGENT") or "Mozilla/5.0"
+        lang: str = os.getenv("GF_LANG") or "ja"
+        time_component: str = str(int(time.time()) // 14400)
+
+        raw: str = f"{user_agent}::{lang}::{self._token}::{time_component}::gf2026x"
+        return hashlib.sha256(raw.encode()).hexdigest()
+
     @staticmethod
     def _get_token() -> str:
         """
@@ -190,14 +212,12 @@ class Main:
 
         :return: The access token of an account. Or exit if account creation fail.
         """
-
         user_agent: str | None = os.getenv("GF_USERAGENT")
         headers: dict[str, str] = {
             "User-Agent": user_agent if user_agent else "Mozilla/5.0",
             "Accept-Encoding": "gzip, deflate, br",
             "Accept": "*/*",
             "Connection": "keep-alive",
-            "x-website-token": "4fd6sg89d7s6",
         }
 
         try:
@@ -285,7 +305,10 @@ class Main:
             "Accept": "*/*",
             "Connection": "keep-alive",
             "Authorization": f"Bearer {self._token}",
-            "x-website-token": "4fd6sg89d7s6",
+            "x-website-token": self._generate_website_token(),
+            "x-bl": os.getenv("GF_LANG") or "ja",
+            "Origin": "https://gofile.io",
+            "Referer": "https://gofile.io/",
         }
 
         try:
@@ -728,7 +751,10 @@ class Main:
             "Accept": "*/*",
             "Connection": "keep-alive",
             "Authorization": f"Bearer {self._token}",
-            "x-website-token": "4fd6sg89d7s6",
+            "x-website-token": self._generate_website_token(),
+            "x-bl": os.getenv("GF_LANG") or "ja",
+            "Origin": "https://gofile.io",
+            "Referer": "https://gofile.io/",
         }
 
         try:
