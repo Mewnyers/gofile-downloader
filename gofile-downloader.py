@@ -809,20 +809,6 @@ class Main:
                 "size": data.get("size", 0),
             }
 
-        # Count the frequency of each filename
-        filename_count: dict[str, int] = {}
-        for item in self._files_info.values():
-            filename_key = item["filename"].lower()
-            filename_count[filename_key] = filename_count.get(filename_key, 0) + 1
-
-        # Append the file ID to the filename only if the filename is duplicated
-        for item in self._files_info.values():
-            filename_key = item["filename"].lower()
-            if filename_count[filename_key] > 1:
-                p_filename = Path(item["filename"])
-                new_stem = f"{p_filename.stem} ({item['id'][:8]})"
-                item["filename"] = p_filename.with_stem(new_stem).name
-
     def _print_list_files(self) -> None:
         """
         _print_list_files
@@ -909,6 +895,20 @@ class Main:
 
         # _parse_links_recursively にベースパス(self._content_dir)を渡す
         self._parse_links_recursively(content_id, self._content_dir, _password)
+
+        # Count the frequency of each filename
+        filename_count: dict[str, int] = {}
+        for item in self._files_info.values():
+            filename_key = item["filename"].lower()
+            filename_count[filename_key] = filename_count.get(filename_key, 0) + 1
+
+        # Append the file ID to the filename only if the filename is duplicated
+        for item in self._files_info.values():
+            filename_key = item["filename"].lower()
+            if filename_count[filename_key] > 1:
+                p_filename = Path(item["filename"])
+                new_stem = f"{p_filename.stem} ({item['id'][:8]})"
+                item["filename"] = p_filename.with_stem(new_stem).name
 
         if not self._files_info:
             logger.error(f"No files found for url: {url}, nothing done.")
