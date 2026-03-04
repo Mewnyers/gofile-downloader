@@ -19,6 +19,11 @@ import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# ユーザーエージェントを定義
+_UA: str = os.getenv("GF_USERAGENT") or (
+    "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) "
+    "Gecko/20100101 Firefox/128.0"
+)
 
 # ファイル情報の辞書構造を定義
 class FileInfo(TypedDict):
@@ -27,7 +32,6 @@ class FileInfo(TypedDict):
     link: str
     id: str
     size: int
-
 
 def setup_logger():
     # remove existing handlers (to prevent redundant output)
@@ -196,11 +200,10 @@ class Main:
 
         :return: 64文字の16進数ハッシュ文字列
         """
-        user_agent: str = os.getenv("GF_USERAGENT") or "Mozilla/5.0"
         lang: str = os.getenv("GF_LANG") or "ja"
         time_component: str = str(int(time.time()) // 14400)
 
-        raw: str = f"{user_agent}::{lang}::{self._token}::{time_component}::gf2026x"
+        raw: str = f"{_UA}::{lang}::{self._token}::{time_component}::gf2026x"
         return hashlib.sha256(raw.encode()).hexdigest()
 
     @staticmethod
@@ -212,9 +215,8 @@ class Main:
 
         :return: The access token of an account. Or exit if account creation fail.
         """
-        user_agent: str | None = os.getenv("GF_USERAGENT")
         headers: dict[str, str] = {
-            "User-Agent": user_agent if user_agent else "Mozilla/5.0",
+            "User-Agent": _UA,
             "Accept-Encoding": "gzip, deflate, br",
             "Accept": "*/*",
             "Connection": "keep-alive",
@@ -297,10 +299,8 @@ class Main:
         if hasattr(self, "_current_password") and self._current_password:
             url = f"{url}&password={self._current_password}"
 
-        user_agent: str | None = os.getenv("GF_USERAGENT")
-
         headers: dict[str, str] = {
-            "User-Agent": user_agent if user_agent else "Mozilla/5.0",
+            "User-Agent": _UA,
             "Accept-Encoding": "gzip, deflate, br",
             "Accept": "*/*",
             "Connection": "keep-alive",
@@ -358,12 +358,10 @@ class Main:
         file_id: str = file_info["id"]
         current_url: str = file_info["link"]
 
-        user_agent: str | None = os.getenv("GF_USERAGENT")
-
         base_headers: dict[str, str] = {
             "Cookie": f"accountToken={self._token}",
             "Accept-Encoding": "gzip, deflate, br",
-            "User-Agent": user_agent if user_agent else "Mozilla/5.0",
+            "User-Agent": _UA,
             "Accept": "*/*",
             "Connection": "keep-alive",
             "Sec-Fetch-Dest": "empty",
@@ -743,10 +741,8 @@ class Main:
         if password:
             url = f"{url}&password={password}"
 
-        user_agent: str | None = os.getenv("GF_USERAGENT")
-
         headers: dict[str, str] = {
-            "User-Agent": user_agent if user_agent else "Mozilla/5.0",
+            "User-Agent": _UA,
             "Accept-Encoding": "gzip, deflate, br",
             "Accept": "*/*",
             "Connection": "keep-alive",
