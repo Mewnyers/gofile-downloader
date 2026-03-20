@@ -185,7 +185,7 @@ class Main:
         GoFileのx-website-tokenをSHA256で動的に生成する。
 
         アルゴリズム:
-          input = UA + '::' + lang + '::' + bearer_token + '::' + time_component + '::' + 'gf2026x'
+          input = UA + '::' + lang + '::' + bearer_token + '::' + time_component + '::' + '暗号鍵'
           token = SHA256(input)
 
           time_component = floor(Unixtime / 14400)  ← 4時間ごとに更新される
@@ -197,7 +197,7 @@ class Main:
         lang: str = os.getenv("GF_LANG") or "ja"
         time_component: str = str(int(time.time()) // 14400)
 
-        raw: str = f"{_UA}::{lang}::{self._token}::{time_component}::gf2026x"
+        raw: str = f"{_UA}::{lang}::{self._token}::{time_component}::f4s58gs6"
         return hashlib.sha256(raw.encode()).hexdigest()
 
     @staticmethod
@@ -217,12 +217,26 @@ class Main:
         }
 
         try:
+            # Step1: 匿名アカウントを作成してトークンを取得
             response = requests.post(
                 "https://api.gofile.io/accounts",
                 headers=headers,
                 timeout=50,
                 verify=False,
             )
+            response.raise_for_status()
+            tmp: dict = response.json()
+            token: str = tmp["data"]["token"]
+
+            # Step2: そのトークンでaccounts/websiteを叩いて正式なアカウント情報を取得
+            headers["Authorization"] = f"Bearer {token}"
+            response = requests.get(
+                "https://api.gofile.io/accounts/website",
+                headers=headers,
+                timeout=50,
+                verify=False,
+            )
+            # logger.debug(f"accounts/website status: {response.status_code}, body: {response.text[:300]}")
             response.raise_for_status()
             create_account_response: dict = response.json()
 
