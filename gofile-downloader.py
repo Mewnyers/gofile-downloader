@@ -287,7 +287,7 @@ class Main:
         :param file_id: GofileのファイルID
         :return: 新しいダウンロードリンク(str) または 失敗した場合は None
         """
-        url: str = f"https://api.gofile.io/contents/{file_id}?cache=true"
+        url: str = f"https://api.gofile.io/contents/{file_id}?contentFilter="
 
         # パスワード情報がある場合はクエリパラメータに追加
         if self._current_password:
@@ -309,7 +309,13 @@ class Main:
             response_handler = requests.get(
                 url, headers=headers, timeout=50, verify=False
             )
-            response_handler.raise_for_status()
+            logger.debug(f"x-website-token: {headers['x-website-token']}")
+            if not response_handler.ok:
+                logger.error(
+                    f"Failed to fetch new link. Status: {response_handler.status_code}, "
+                    f"Body: {response_handler.text[:300]}"
+                )
+                return None
             response: dict[Any, Any] = response_handler.json()
 
             data = response.get("data", {})
@@ -727,8 +733,10 @@ class Main:
         :param password: content's password.
         :return:
         """
-
-        url: str = f"https://api.gofile.io/contents/{content_id}?cache=true"
+        url: str = (
+            f"https://api.gofile.io/contents/{content_id}"
+            f"?contentFilter=&page=1&pageSize=1000&sortField=name&sortDirection=1"
+        )
 
         if password:
             url = f"{url}&password={password}"
@@ -749,7 +757,13 @@ class Main:
             response_handler = requests.get(
                 url, headers=headers, timeout=50, verify=False
             )
-            response_handler.raise_for_status()
+            logger.debug(f"x-website-token: {headers['x-website-token']}")
+            if not response_handler.ok:
+                logger.error(
+                    f"Failed to fetch content info. Status: {response_handler.status_code}, "
+                    f"Body: {response_handler.text[:300]}"
+                )
+                return
             response: dict[Any, Any] = response_handler.json()
         except RequestException as e:
             logger.error(f"Failed to fetch content info from {url}: {e}")
