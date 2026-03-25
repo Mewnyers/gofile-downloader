@@ -24,6 +24,8 @@ _UA: str = os.getenv("GF_USERAGENT") or (
     "Gecko/20100101 Firefox/128.0"
 )
 
+_GF_SECRET: str = "5d4f7g8sd45fsd"
+
 # ファイル情報の辞書構造を定義
 class FileInfo(TypedDict):
     path: Path
@@ -197,7 +199,7 @@ class Main:
         lang: str = os.getenv("GF_LANG") or "ja"
         time_component: str = str(int(time.time()) // 14400)
 
-        raw: str = f"{_UA}::{lang}::{self._token}::{time_component}::f4s58gs6"
+        raw: str = f"{_UA}::{lang}::{self._token}::{time_component}::{_GF_SECRET}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
     @staticmethod
