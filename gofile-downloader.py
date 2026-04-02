@@ -1,18 +1,21 @@
 #! /usr/bin/env python3
 
-import os
-import sys
-import requests
-import threading
+import argparse
 import hashlib
+import os
 import shutil
+import sys
+import threading
 import time
 import unicodedata
-from pathlib import Path
-from loguru import logger
-from typing import Any, Dict, Optional, TypedDict
 from concurrent.futures import ThreadPoolExecutor
-from requests.exceptions import RequestException, ConnectTimeout
+from pathlib import Path
+from typing import Any, Dict, Optional, TypedDict
+
+import requests
+from loguru import logger
+from requests.exceptions import ConnectTimeout, RequestException
+
 
 # ユーザーエージェントを定義
 _UA: str = os.getenv("GF_USERAGENT") or (
@@ -22,6 +25,7 @@ _UA: str = os.getenv("GF_USERAGENT") or (
 
 _GF_SECRET: str = "5d4f7g8sd45fsd"
 
+
 # ファイル情報の辞書構造を定義
 class FileInfo(TypedDict):
     path: Path
@@ -29,6 +33,7 @@ class FileInfo(TypedDict):
     link: str
     id: str
     size: int
+
 
 def setup_logger(debug: bool = False):
     # remove existing handlers (to prevent redundant output)
@@ -93,7 +98,7 @@ class Main:
         """
         ダウンロード処理を実行します。
         """
-        logger.info(f"Starting, please wait...")
+        logger.info("Starting, please wait...")
 
         # APIの不調によるリスト取得漏れを防ぐため、自動的に2周実行する
         MAX_PASSES = 2
@@ -129,7 +134,7 @@ class Main:
         :return:
         """
         if not self._content_dir:
-            logger.error(f"Content directory wasn't created, nothing done.")
+            logger.error("Content directory wasn't created, nothing done.")
             return
 
         executor = ThreadPoolExecutor(max_workers=self._max_workers)
@@ -421,7 +426,7 @@ class Main:
                         # ファイル消失など(404) -> 即時撤退
                         with self._lock:
                             logger.error(
-                                f"Got same link and error was FATAL (e.g. 404). Aborting immediately."
+                                "Got same link and error was FATAL (e.g. 404). Aborting immediately."
                             )
                         break
 
@@ -429,7 +434,7 @@ class Main:
                         # 原因不明 -> 無駄打ち回避のため終了
                         with self._lock:
                             logger.error(
-                                f"Got same link with UNKNOWN error type. Aborting."
+                                "Got same link with UNKNOWN error type. Aborting."
                             )
                         break
                 else:
@@ -484,8 +489,8 @@ class Main:
                                 )
                                 sys.stdout.flush()
                                 logger.warning(
-                                    f"Attempt {attempt}/{max_retries_per_link}: Received status 416 (Range Not Satisfiable). "
-                                    f"The '.part' file is likely corrupted. Deleting it and retrying."
+                                    f"Attempt {attempt}/{max_retries_per_link}: Received status 416 (Range Not Satisfiable)."
+                                    "The '.part' file is likely corrupted. Deleting it and retrying."
                                 )
 
                             if tmp_file.exists():
@@ -522,7 +527,8 @@ class Main:
                                 )
                                 sys.stdout.flush()
                                 logger.error(
-                                    f"Attempt {attempt}/{max_retries_per_link}: Couldn't download the file from {current_url.split('/')[2]}. Status code: {status_code}"
+                                    f"Attempt {attempt}/{max_retries_per_link}: Couldn't download the file from {current_url.split('/')[2]}."
+                                    f"Status code: {status_code}"
                                 )
                             continue  # 内側リトライ
 
@@ -549,7 +555,7 @@ class Main:
                                 sys.stdout.flush()
                                 logger.warning(
                                     f"Attempt {attempt}/{max_retries_per_link}: Faulty CDN Node detected for {file_info['filename']}. "
-                                    f"Server OK (200) but no file size. Retrying on same link..."
+                                    "Server OK (200) but no file size. Retrying on same link..."
                                 )
 
                             if attempt < max_retries_per_link:
@@ -571,7 +577,8 @@ class Main:
                                 )
                                 sys.stdout.flush()
                                 logger.error(
-                                    f"Attempt {attempt}/{max_retries_per_link}: Couldn't find the file size from {current_url.split('/')[2]}. Status code: {status_code}"
+                                    f"Attempt {attempt}/{max_retries_per_link}: Couldn't find the file size from {current_url.split('/')[2]}."
+                                    f"Status code: {status_code}"
                                 )
                             continue  # 内側リトライ
 
@@ -789,7 +796,7 @@ class Main:
             and "passwordStatus" in data
             and data["passwordStatus"] != "passwordOk"
         ):
-            logger.warning(f"Password protected link. Please provide the password.")
+            logger.warning("Password protected link. Please provide the password.")
             return
 
         if data["type"] == "folder":
@@ -1033,7 +1040,7 @@ class Main:
                 logger.info("Downloading all files...")
 
             elif not valid_inputs:
-                logger.info(f"No valid files selected. Nothing done.")
+                logger.info("No valid files selected. Nothing done.")
                 # (空フォルダは削除せず残す)
                 self._reset_class_properties()
                 return False
@@ -1048,7 +1055,7 @@ class Main:
         if self._stop_event.is_set():
             logger.warning("Download Aborted by User.")
         else:
-            logger.info(f"Download Completed!")
+            logger.info("Download Completed!")
         self._reset_class_properties()
         return True
 
@@ -1108,8 +1115,6 @@ class Main:
 
 if __name__ == "__main__":
     try:
-        import argparse
-
         parser = argparse.ArgumentParser(description="GoFile downloader")
         parser.add_argument("url", nargs="?", help="URL or file path to download")
         parser.add_argument("password", nargs="?", default=None, help="Password for protected content")
