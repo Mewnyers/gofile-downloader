@@ -30,7 +30,7 @@ class FileInfo(TypedDict):
     id: str
     size: int
 
-def setup_logger():
+def setup_logger(debug: bool = False):
     # remove existing handlers (to prevent redundant output)
     logger.remove()
 
@@ -39,7 +39,7 @@ def setup_logger():
         return "<level>{message}</level>\n"
 
     # console output (colored)
-    logger.add(sys.stdout, format=console_format_function, level="DEBUG", enqueue=False)
+    logger.add(sys.stdout, format=console_format_function, level="DEBUG" if debug else "INFO", enqueue=False)
 
     # file output: with details (timestamp, level, caller, etc.
     logger.add(
@@ -232,7 +232,7 @@ class Main:
                 headers=headers,
                 timeout=50,
             )
-            # logger.debug(f"accounts/website status: {response.status_code}, body: {response.text[:300]}")
+            logger.debug(f"accounts/website status: {response.status_code}, body: {response.text[:300]}")
             response.raise_for_status()
             create_account_response: dict = response.json()
 
@@ -1108,44 +1108,54 @@ class Main:
 
 if __name__ == "__main__":
     try:
-        setup_logger()
+        import argparse
 
-        url: str | None = None
-        password: str | None = None
-        argc: int = len(sys.argv)
+        parser = argparse.ArgumentParser(description="GoFile downloader")
+        parser.add_argument("url", nargs="?", help="URL or file path to download")
+        parser.add_argument("password", nargs="?", default=None, help="Password for protected content")
+        parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+        parser.add_argument("--multi", action="store_true", help="Download multiple URLs interactively")
+        args = parser.parse_args()
 
-        # 引数なしの処理
-        if argc == 1:
+        setup_logger(debug=args.debug)
+
+        if args.multi:
+            # 複数URL対話入力モード
+            print("Please enter the URL or file path to download:")
+            urls: list[tuple[str, str | None]] = []
+            while True:
+                line = input().strip()
+                if line == "EOF":
+                    break
+                if not line:
+                    continue
+                parts = line.split(maxsplit=1)
+                url = parts[0]
+                password = parts[1] if len(parts) > 1 else None
+                urls.append((url, password))
+
+            for url, password in urls:
+                downloader = Main(url=url, password=password)
+                downloader.run()
+
+        elif args.url:
+            downloader = Main(url=args.url, password=args.password)
+            downloader.run()
+
+        else:
+            # 引数なしの対話入力
             user_input = input(
-                "Please enter the URL or file path to download: "
+                "Please enter the URL or file path to download:\n"
             ).strip()
 
             if user_input:
                 parts = user_input.split(maxsplit=1)
                 url = parts[0]
-                if len(parts) > 1:
-                    password = parts[1]
+                password = parts[1] if len(parts) > 1 else None
+                downloader = Main(url=url, password=password)
+                downloader.run()
             else:
                 sys.exit(0)
-
-        # 引数ありの処理
-        elif argc == 2:
-            url = sys.argv[1]
-        elif argc == 3:
-            url = sys.argv[1]
-            password = sys.argv[2]
-        else:
-            logger.info(
-                f"Usage:\n"
-                f"python gofile-downloader.py https://gofile.io/d/contentid\n"
-                f"python gofile-downloader.py https://gofile.io/d/contentid password\n"
-                f"python gofile-downloader.py /path/to/links.txt\n"
-            )
-            sys.exit(-1)
-
-        if url:
-            downloader = Main(url=url, password=password)
-            downloader.run()
 
     except KeyboardInterrupt:
         pass
