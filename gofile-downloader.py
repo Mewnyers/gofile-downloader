@@ -1050,6 +1050,7 @@ class Main:
                 for key in keys_to_delete:
                     del self._files_info[key]
 
+        logger.info(f"Total files: {len(self._files_info)}")
         self._threaded_downloads()
         if self._stop_event.is_set():
             logger.warning("Download Aborted by User.")
