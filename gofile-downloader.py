@@ -14,10 +14,6 @@ from typing import Any, Dict, Optional, TypedDict
 from concurrent.futures import ThreadPoolExecutor
 from requests.exceptions import RequestException, ConnectTimeout
 
-# SSL検証無効化に伴う警告ログを非表示にする
-import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 # ユーザーエージェントを定義
 _UA: str = os.getenv("GF_USERAGENT") or (
     "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) "
@@ -224,7 +220,6 @@ class Main:
                 "https://api.gofile.io/accounts",
                 headers=headers,
                 timeout=50,
-                verify=False,
             )
             response.raise_for_status()
             tmp: dict = response.json()
@@ -236,7 +231,6 @@ class Main:
                 "https://api.gofile.io/accounts/website",
                 headers=headers,
                 timeout=50,
-                verify=False,
             )
             # logger.debug(f"accounts/website status: {response.status_code}, body: {response.text[:300]}")
             response.raise_for_status()
@@ -323,7 +317,7 @@ class Main:
 
         try:
             response_handler = requests.get(
-                url, headers=headers, timeout=50, verify=False
+                url, headers=headers, timeout=50,
             )
             logger.debug(f"x-website-token: {headers['x-website-token']}")
             if not response_handler.ok:
@@ -480,7 +474,6 @@ class Main:
                         headers=current_headers,
                         stream=True,
                         timeout=(20, 60),
-                        verify=False,
                     ) as response_handler:
                         status_code = response_handler.status_code
 
@@ -771,7 +764,7 @@ class Main:
 
         try:
             response_handler = requests.get(
-                url, headers=headers, timeout=50, verify=False
+                url, headers=headers, timeout=50,
             )
             logger.debug(f"x-website-token: {headers['x-website-token']}")
             if not response_handler.ok:
