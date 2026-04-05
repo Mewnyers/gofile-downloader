@@ -128,8 +128,7 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# URL List & Downloaded File
-my-urls.txt
+# Downloaded File
 Videos/
 Singles/
 
