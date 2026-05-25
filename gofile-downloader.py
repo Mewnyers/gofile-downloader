@@ -23,7 +23,7 @@ _UA: str = os.getenv("GF_USERAGENT") or (
     "Gecko/20100101 Firefox/128.0"
 )
 
-_GF_SECRET: str = "5d4f7g8sd45fsd"
+_GF_SECRET: str = "g4f8fd9f12h14g"
 
 
 # ファイル情報の辞書構造を定義
